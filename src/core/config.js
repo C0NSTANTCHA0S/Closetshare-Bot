@@ -18,7 +18,6 @@ const config = {
   nodeEnv: process.env.NODE_ENV || "development",
   logLevel: process.env.BOT_LOG_LEVEL || "info",
   dataDir: path.resolve(rootDir, process.env.DATA_DIR || "./data"),
-  ownerUserId: process.env.OWNER_USER_ID || "",
   ownerRoleId: process.env.OWNER_ROLE_ID || "",
   leaderboardChannelId: process.env.COINS_LEADERBOARD_CHANNEL_ID || "",
   leaderboardThumbnailUrl: process.env.COINS_LEADERBOARD_THUMBNAIL_URL || "",
