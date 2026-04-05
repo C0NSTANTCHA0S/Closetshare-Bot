@@ -34,7 +34,7 @@ function coinsDisplay(value) {
 function buildLeaderboardDescription(rows) {
   if (!rows.length) {
     return [
-      "🔥━━━━━━━━ TOP VOLUNTEER EARNERS ━━━━━━━━🔥",
+      "🔥TOP VOLUNTEER EARNERS🔥",
       "",
       "No members have coins yet.",
       "",
