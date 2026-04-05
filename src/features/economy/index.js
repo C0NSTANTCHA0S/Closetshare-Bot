@@ -34,23 +34,28 @@ function coinsDisplay(value) {
 function buildLeaderboardDescription(rows) {
   if (!rows.length) {
     return [
+      "🔥━━━━━━━━ TOP VOLUNTEER EARNERS ━━━━━━━━🔥",
+      "",
       "No members have coins yet.",
       "",
       "Use `/coins-add` to award the first coins and then refresh the board."
     ].join("\n");
   }
 
-  return rows
-    .map((row, index) => {
-      const medal = index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : "•";
-      return `${medal} **${index + 1}.** <@${row.user_id}> — **${Number(row.balance).toLocaleString()}**`;
-    })
-    .join("\n");
+  const lines = rows.map((row, index) => {
+    const rankIcon = index === 0 ? "🏆" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}️⃣`;
+    const rankLabel = `#${index + 1}`;
+    const userLabel = `<@${row.user_id}>`;
+    const balanceLabel = `${Number(row.balance).toLocaleString()} coins`;
+    return `${rankIcon} ${rankLabel} ${userLabel} 💰 ${balanceLabel}`;
+  });
+
+  return ["🔥━━━━━━━━ TOP VOLUNTEER EARNERS ━━━━━━━━🔥", "", ...lines].join("\n");
 }
 
 function buildLeaderboardEmbed(guild, rows) {
   const embed = makeEmbed({
-    title: `${guild?.name || "Server"} Coin Leaderboard`,
+    title: "Closet Share Coin Leaderboard",
     description: buildLeaderboardDescription(rows),
     footer: `Top ${LEADERBOARD_LIMIT} members`
   });
@@ -62,9 +67,9 @@ function buildLeaderboardEmbed(guild, rows) {
   if (imageUrl) embed.setImage(imageUrl);
 
   embed.addFields({
-    name: "How it works",
+    name: "Top Volunteer Earners",
     value:
-      "Participate in activities to earn coins such as logging in daily, completing closet share tasks ect. Spend your coins in the Swag Shop to buy items.",
+      "Lifetime coin totals with persistent tracking. All transactions are saved to the database to keep balances accurate.",
     inline: false
   });
 
