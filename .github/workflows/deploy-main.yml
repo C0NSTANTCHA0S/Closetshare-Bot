@@ -36,3 +36,7 @@ jobs:
               npm install
             fi
 
+            node register-commands.js
+            pm2 restart cs-bot --update-env
+            pm2 save
+
