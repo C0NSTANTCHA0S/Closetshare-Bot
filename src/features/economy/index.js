@@ -47,7 +47,7 @@ function buildLeaderboardDescription(rows) {
     const rankLabel = `#${index + 1}`;
     const userLabel = `<@${row.user_id}>`;
     const balanceLabel = `${Number(row.balance).toLocaleString()} coins`;
-    return `${rankIcon} ${rankLabel} ${userLabel} 💰 ${balanceLabel}`;
+    return `${rankIcon} ${rankLabel} ${userLabel} 🪙 ${balanceLabel}`;
   });
 
   return ["🔥TOP VOLUNTEER EARNERS🔥", "", ...lines].join("\n");
@@ -69,7 +69,7 @@ function buildLeaderboardEmbed(guild, rows) {
   embed.addFields({
     name: "🔧How it Works🔧",
     value:
-      "Earn coins through participating in activities such as daily log ins, completing Closet Share tasks ect. Spend your coins in the Swag Shop to order custom items.",
+      "Earn 🪙 through participating in activities such as daily log ins, completing Closet Share tasks ect. Spend your 🪙 in the Swag Shop to order custom items. Use Check Balance to see your 🪙 balance.",
     inline: false
   });
 
