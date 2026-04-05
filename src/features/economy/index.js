@@ -64,7 +64,7 @@ function buildLeaderboardEmbed(guild, rows) {
   embed.addFields({
     name: "How it works",
     value:
-      "All coin awards and deductions are tracked in SQLite. Hidden members stay in the database but are left off this board.",
+      "Participate in activities to earn coins such as logging in daily, completing closet share tasks ect. Spend your coins in the Swag Shop to buy items.",
     inline: false
   });
 
