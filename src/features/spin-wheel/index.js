@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require("discord.js");
 const { makeEmbed, reply } = require("../../core/discord-helpers");
+const { applyCoinDelta } = require("../../core/economy-db");
 
 function createFeature({ featureName, featureSlug, createFeatureDb }) {
   const { db, dbPath } = createFeatureDb(featureSlug, "spinwheel.sqlite");
@@ -32,12 +33,24 @@ function createFeature({ featureName, featureSlug, createFeatureDb }) {
         async execute(interaction) {
           const reward = rewards[Math.floor(Math.random() * rewards.length)];
           insertSpinStmt.run(interaction.guildId || "dm", interaction.user.id, reward);
+
+          if (reward > 0) {
+            applyCoinDelta({
+              guildId: interaction.guildId || "dm",
+              userId: interaction.user.id,
+              amount: reward,
+              reason: "Spin wheel reward",
+              createdBy: interaction.user.id,
+              source: "spin_wheel"
+            });
+          }
+
           return reply(interaction, {
             embeds: [
               makeEmbed({
                 title: "Spin result",
                 description: reward > 0 ? `You won **${reward}** coins.` : `No coins this time.`,
-                footer: "Starter wheel logic only — connect this to Economy next."
+                footer: "Spin rewards are applied to your persistent coin balance."
               })
             ]
           });
