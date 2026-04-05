@@ -69,7 +69,7 @@ function buildLeaderboardEmbed(guild, rows) {
   embed.addFields({
     name: "🔧How it Works🔧",
     value:
-      "Earn 🪙 through participating in activities such as daily log ins, completing Closet Share tasks ect. Spend your 🪙 in the Swag Shop to order custom items. Use Check Balance to see your 🪙 balance.",
+      "Earn coins through participating in activities such as daily log ins, completing Closet Share tasks ect. Spend your coins in the Swag Shop to order custom items. Use Check Balance to see your coin balance.",
     inline: false
   });
 
