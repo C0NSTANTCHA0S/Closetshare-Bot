@@ -1912,7 +1912,8 @@ function createFeature({ featureSlug, createFeatureDb }) {
         )
         .addIntegerOption((option) =>
           option.setName("coins").setDescription("Coins earned when approved").setRequired(true).setMinValue(1)
-        ),
+        )
+        .addStringOption((option) => option.setName("title").setDescription("Short task title").setRequired(false).setMaxLength(90)),
       async execute(interaction) {
         const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
         if (denied) return denied;
