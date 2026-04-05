@@ -1,144 +1,18 @@
-const {
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  SlashCommandBuilder
-} = require("discord.js");
+const { SlashCommandBuilder } = require("discord.js");
 const { config } = require("../../core/config");
+const { ensureOwnerAccess, makeEmbed, reply } = require("../../core/discord-helpers");
+const { economyPath, getCoinBalance, applyCoinDelta, setMemberHidden, getLeaderboardMessage, getTopCoinBalances } =
+  require("../../core/economy-db");
 const {
-  ensureOwnerAccess,
-  logDiscordPayloadError,
-  makeEmbed,
-  reply,
-  safeEmbedUrl
-} = require("../../core/discord-helpers");
-const {
-  economyPath,
-  getCoinBalance,
-  applyCoinDelta,
-  setMemberHidden,
-  getTopCoinBalances,
-  setLeaderboardMessage,
-  getLeaderboardMessage,
-  clearLeaderboardMessage
-} = require("../../core/economy-db");
-
-const CHECK_BALANCE_BUTTON_ID = "coins:check-balance";
-const REFRESH_BUTTON_ID = "coins:refresh-leaderboard";
-const LEADERBOARD_LIMIT = 20;
+  CHECK_BALANCE_BUTTON_ID,
+  REFRESH_BUTTON_ID,
+  LEADERBOARD_LIMIT,
+  buildLeaderboardEmbed,
+  syncLeaderboardMessage
+} = require("../../core/economy-leaderboard");
 
 function coinsDisplay(value) {
   return `${Number(value || 0).toLocaleString()} coin${Math.abs(Number(value || 0)) === 1 ? "" : "s"}`;
-}
-
-function buildLeaderboardDescription(rows) {
-  if (!rows.length) {
-    return [
-      "🔥TOP VOLUNTEER EARNERS🔥",
-      "",
-      "No members have coins yet.",
-      "",
-      "Use `/coins-add` to award the first coins and then refresh the board."
-    ].join("\n");
-  }
-
-  const lines = rows.map((row, index) => {
-    const rankIcon = index === 0 ? "🏆" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}️⃣`;
-    const rankLabel = `#${index + 1}`;
-    const userLabel = `<@${row.user_id}>`;
-    const balanceLabel = `${Number(row.balance).toLocaleString()} coins`;
-    return `${rankIcon} ${rankLabel} ${userLabel} 🪙 ${balanceLabel}`;
-  });
-
-  return ["🔥TOP VOLUNTEER EARNERS🔥", "", ...lines].join("\n");
-}
-
-function buildLeaderboardEmbed(guild, rows) {
-  const embed = makeEmbed({
-    title: "Closet Share Coin Leaderboard",
-    description: buildLeaderboardDescription(rows),
-    footer: `Top ${LEADERBOARD_LIMIT} members`
-  });
-
-  const thumbnailUrl = safeEmbedUrl(config.leaderboardThumbnailUrl);
-  const imageUrl = safeEmbedUrl(config.leaderboardImageUrl);
-
-  if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
-  if (imageUrl) embed.setImage(imageUrl);
-
-  embed.addFields({
-    name: "🔧How it Works🔧",
-    value:
-      "Earn coins through participating in activities such as daily log ins, completing Closet Share tasks ect. Spend your coins in the Swag Shop to order custom items. Use Check Balance to see your coin balance.",
-    inline: false
-  });
-
-  return embed;
-}
-
-function buildLeaderboardComponents() {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(CHECK_BALANCE_BUTTON_ID)
-        .setLabel("Check Balance")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(REFRESH_BUTTON_ID)
-        .setLabel("Refresh")
-        .setStyle(ButtonStyle.Secondary)
-    )
-  ];
-}
-
-
-function logLeaderboardPayloadError(stage, error, payload) {
-  logDiscordPayloadError(`economy leaderboard ${stage}`, error, payload);
-}
-
-async function renderLeaderboardMessage(target) {
-  const rows = getTopCoinBalances(target.guildId, LEADERBOARD_LIMIT);
-  return {
-    embeds: [buildLeaderboardEmbed(target.guild, rows)],
-    components: buildLeaderboardComponents()
-  };
-}
-
-async function syncLeaderboardMessage({ client, guildId, channelId, forcePost = false }) {
-  const guild = client.guilds.cache.get(guildId) || (await client.guilds.fetch(guildId));
-  const targetChannelId = channelId || config.leaderboardChannelId;
-  if (!targetChannelId) {
-    throw new Error("Missing COINS_LEADERBOARD_CHANNEL_ID environment variable.");
-  }
-
-  const channel = guild.channels.cache.get(targetChannelId) || (await guild.channels.fetch(targetChannelId));
-  if (!channel || typeof channel.send !== "function") {
-    throw new Error("Configured leaderboard channel is not a text channel I can post in.");
-  }
-
-  const payload = await renderLeaderboardMessage({ guildId, guild });
-  const existing = getLeaderboardMessage(guildId);
-
-  if (!forcePost && existing && existing.channel_id === targetChannelId) {
-    try {
-      const message = await channel.messages.fetch(existing.message_id);
-      await message.edit(payload);
-      setLeaderboardMessage(guildId, channel.id, message.id);
-      return { action: "updated", message };
-    } catch (error) {
-      logLeaderboardPayloadError("edit", error, payload);
-      clearLeaderboardMessage(guildId);
-    }
-  }
-
-  try {
-    const posted = await channel.send(payload);
-    setLeaderboardMessage(guildId, channel.id, posted.id);
-    return { action: "posted", message: posted };
-  } catch (error) {
-    logLeaderboardPayloadError("send", error, payload);
-    throw error;
-  }
 }
 
 function createFeature() {
