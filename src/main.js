@@ -5,7 +5,7 @@ loadEnv();
 const { createBotClient } = require("./core/client");
 const { config } = require("./core/config");
 const { loadFeatures } = require("./core/storage");
-const { wireInteractionHandlers } = require("./interactions/chat-commands");
+const { wireInteractionHandlers } = require("./interactions/interactions");
 
 async function main() {
   const features = loadFeatures();

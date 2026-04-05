@@ -16,10 +16,22 @@ function createBotClient(features) {
   client.selectMenus = new Collection();
   client.modals = new Collection();
   client.features = features;
+  client.commandOwners = new Collection();
 
   for (const feature of features) {
     for (const command of feature.commands || []) {
-      client.commands.set(command.data.name, command);
+      const commandName = command?.data?.name;
+      if (!commandName) {
+        throw new Error(`Feature "${feature.name}" has a runtime command without a valid name.`);
+      }
+      if (client.commands.has(commandName)) {
+        const existingOwner = client.commandOwners.get(commandName) || "unknown";
+        throw new Error(
+          `Duplicate runtime command "${commandName}" found in features "${existingOwner}" and "${feature.name}".`
+        );
+      }
+      client.commands.set(commandName, command);
+      client.commandOwners.set(commandName, feature.name);
     }
     for (const button of feature.buttons || []) {
       client.buttons.set(button.customId, button);
