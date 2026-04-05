@@ -50,7 +50,7 @@ function buildLeaderboardDescription(rows) {
     return `${rankIcon} ${rankLabel} ${userLabel} 💰 ${balanceLabel}`;
   });
 
-  return ["🔥━━━━━━━━ TOP VOLUNTEER EARNERS ━━━━━━━━🔥", "", ...lines].join("\n");
+  return ["🔥TOP VOLUNTEER EARNERS🔥", "", ...lines].join("\n");
 }
 
 function buildLeaderboardEmbed(guild, rows) {
@@ -67,9 +67,9 @@ function buildLeaderboardEmbed(guild, rows) {
   if (imageUrl) embed.setImage(imageUrl);
 
   embed.addFields({
-    name: "Top Volunteer Earners",
+    name: "🔧How it Works🔧",
     value:
-      "Lifetime coin totals with persistent tracking. All transactions are saved to the database to keep balances accurate.",
+      "Earn coins through participating in activities such as daily log ins, completing Closet Share tasks ect. Spend your coins in the Swag Shop to order custom items.",
     inline: false
   });
 
