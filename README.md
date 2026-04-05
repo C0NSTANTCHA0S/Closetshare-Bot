@@ -1,48 +1,28 @@
-# Closet Share Bot Starter
+# Closet Share Bot
 
-This is a stable starter Discord bot scaffold built around **one SQLite database per feature**.
-
-## What is included
-
-- Dynamic feature loading from `src/features/*/index.js`
-- Separate SQLite file for each feature under `data/<feature-slug>/`
-- Working slash command registration
-- Stable command / button / modal / select interaction router
-- Starter features for:
-  - CS Tasks
-  - Economy
-  - Leaderboard
-  - Shift Reports
-  - SpinWheel
+Discord bot for Closet Share.
 
 ## Setup
-
 1. Copy `.env.example` to `.env`
-2. Fill in:
-   - `DISCORD_TOKEN`
-   - `DISCORD_CLIENT_ID`
-   - `DISCORD_GUILD_ID` (recommended for testing)
-3. Install packages:
-   - `npm install`
-4. Register commands:
-   - `npm run register`
-5. Start the bot:
-   - `npm run start`
+2. Fill in environment variables
+3. Install dependencies
+4. Register commands
+5. Start the bot
 
-## Feature pattern
+## Common commands
+- `node register-commands.js`
+- `pm2 restart cs-bot --update-env`
 
-Each feature exports `createFeature()` from its own `index.js` and receives:
+## Project structure
+- `register-commands.js` — centralized slash command registration
+- `src/core/` — shared env, config, helpers, storage
+- `src/features/` — feature modules
 
-- `featureName`
-- `featureSlug`
-- `createFeatureDb()`
+## Notes
+- Do not commit `.env`
+- Keep command registration aligned with runtime commands
+- Prefer shared helpers over duplicated feature logic
 
-That lets every feature own its own schema and DB file.
-
-## Recommended next build order
-
-1. Finish Economy as your shared reward system
-2. Connect SpinWheel rewards into Economy transactions
-3. Add volunteer referrals as a dedicated feature with its own DB
-4. Add approvals/modals/buttons only after the slash-command flow is stable
-5. Add scheduled jobs after core commands are proven stable
+## GitHub auto-deploy
+This repo includes a GitHub Actions workflow at `.github/workflows/deploy-main.yml`.
+When code is pushed to `main`, it SSHes into your server, updates the repo, installs dependencies, runs `register-commands.js`, and restarts the bot with PM2.
