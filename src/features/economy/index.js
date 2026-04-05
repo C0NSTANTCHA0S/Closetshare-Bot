@@ -13,7 +13,7 @@ const {
   safeEmbedUrl
 } = require("../../core/discord-helpers");
 const {
-  sharedPath,
+  economyPath,
   getCoinBalance,
   applyCoinDelta,
   setMemberHidden,
@@ -21,7 +21,7 @@ const {
   setLeaderboardMessage,
   getLeaderboardMessage,
   clearLeaderboardMessage
-} = require("../../core/shared-db");
+} = require("../../core/economy-db");
 
 const CHECK_BALANCE_BUTTON_ID = "coins:check-balance";
 const REFRESH_BUTTON_ID = "coins:refresh-leaderboard";
@@ -379,7 +379,7 @@ function createFeature() {
   ];
 
   return {
-    dbPath: sharedPath,
+    dbPath: economyPath,
     commands,
     buttons,
     async onReady({ client }) {
