@@ -1911,11 +1911,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
             .setMaxLength(1000)
         )
         .addIntegerOption((option) =>
-          option
-            .setName("coins")
-            .setDescription("Coins earned when approved")
-            .setRequired(true)
-            .setMinValue(1)
+          option.setName("coins").setDescription("Coins earned when approved").setRequired(true).setMinValue(1)
         )
         .addStringOption((option) =>
           option
