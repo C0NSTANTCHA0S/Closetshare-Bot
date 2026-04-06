@@ -84,6 +84,10 @@ function logLeaderboardPayloadError(stage, error, payload) {
   logDiscordPayloadError(`economy leaderboard ${stage}`, error, payload);
 }
 
+function isUnknownMessageError(error) {
+  return error?.code === 10008 || error?.rawError?.code === 10008;
+}
+
 async function syncLeaderboardMessage({ client, guildId, channelId, forcePost = false }) {
   const guild = client.guilds.cache.get(guildId) || (await client.guilds.fetch(guildId));
   const targetChannelId = channelId || config.leaderboardChannelId;
@@ -107,7 +111,13 @@ async function syncLeaderboardMessage({ client, guildId, channelId, forcePost = 
       setLeaderboardMessage(guildId, channel.id, message.id);
       return { action: "updated", message };
     } catch (error) {
-      logLeaderboardPayloadError("edit", error, payload);
+      if (isUnknownMessageError(error)) {
+        console.warn(
+          `[economy] Clearing stale leaderboard message reference for guild ${guildId} (channel ${existing.channel_id}, message ${existing.message_id}).`
+        );
+      } else {
+        logLeaderboardPayloadError("edit", error, payload);
+      }
       clearLeaderboardMessage(guildId);
     }
   }

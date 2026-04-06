@@ -1,4 +1,4 @@
-const { EmbedBuilder, PermissionFlagsBits } = require("discord.js");
+const { EmbedBuilder, MessageFlags, PermissionFlagsBits } = require("discord.js");
 
 function makeEmbed({ title, description, color = 0x2b7fff, fields = [], footer } = {}) {
   const embed = new EmbedBuilder().setColor(color);
@@ -9,11 +9,30 @@ function makeEmbed({ title, description, color = 0x2b7fff, fields = [], footer }
   return embed;
 }
 
-async function reply(interaction, payload) {
-  if (interaction.deferred || interaction.replied) {
-    return interaction.followUp(payload);
+function normalizeInteractionPayload(payload) {
+  if (!payload || typeof payload !== "object" || !Object.prototype.hasOwnProperty.call(payload, "ephemeral")) {
+    return payload;
   }
-  return interaction.reply(payload);
+
+  const normalized = { ...payload };
+  const shouldBeEphemeral = Boolean(normalized.ephemeral);
+  delete normalized.ephemeral;
+
+  if (!shouldBeEphemeral) {
+    return normalized;
+  }
+
+  const existingFlags = normalized.flags ?? 0;
+  normalized.flags = existingFlags | MessageFlags.Ephemeral;
+  return normalized;
+}
+
+async function reply(interaction, payload) {
+  const normalizedPayload = normalizeInteractionPayload(payload);
+  if (interaction.deferred || interaction.replied) {
+    return interaction.followUp(normalizedPayload);
+  }
+  return interaction.reply(normalizedPayload);
 }
 
 function hasAdminPermission(interaction) {
