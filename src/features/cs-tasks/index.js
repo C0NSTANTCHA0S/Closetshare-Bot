@@ -208,15 +208,36 @@ function buildTaskEmbed(task, stats, latestClaim) {
 }
 
 function buildTaskComponents(task, latestClaim) {
-  const terminal = TERMINAL_TASK_STATUSES.has(task.status) || Boolean(task.is_archived);
-  const claimedBySomeone = task.task_type === "single" && latestClaim && !TERMINAL_CLAIM_STATUSES.has(latestClaim.status);
-  const pendingApproval = latestClaim && [CLAIM_STATUSES.SUBMITTED, CLAIM_STATUSES.APPROVING].includes(latestClaim.status);
+  const taskStatus = task?.status ?? null;
+  const taskType = task?.task_type ?? null;
+  const latestClaimStatus = latestClaim?.status ?? null;
+  const isArchived = Boolean(task?.is_archived);
 
-  const acceptDisabled = terminal || task.status !== TASK_STATUSES.OPEN || claimedBySomeone || pendingApproval;
-  const completeDisabled = terminal || !latestClaim || latestClaim.status !== CLAIM_STATUSES.ACCEPTED;
-  const cancelDisabled = terminal || !latestClaim || latestClaim.status !== CLAIM_STATUSES.ACCEPTED;
-  const editDisabled = terminal || pendingApproval;
-  const closeDisabled = terminal;
+  const terminal = Boolean(TERMINAL_TASK_STATUSES.has(taskStatus) || isArchived);
+  const claimedBySomeone = Boolean(
+    taskType === "single" &&
+      latestClaim &&
+      !TERMINAL_CLAIM_STATUSES.has(latestClaimStatus)
+  );
+  const pendingApproval = Boolean(
+    latestClaim &&
+      [CLAIM_STATUSES.SUBMITTED, CLAIM_STATUSES.APPROVING].includes(latestClaimStatus)
+  );
+
+  const acceptDisabled = Boolean(
+    terminal ||
+      taskStatus !== TASK_STATUSES.OPEN ||
+      claimedBySomeone ||
+      pendingApproval
+  );
+  const completeDisabled = Boolean(
+    terminal || !latestClaim || latestClaimStatus !== CLAIM_STATUSES.ACCEPTED
+  );
+  const cancelDisabled = Boolean(
+    terminal || !latestClaim || latestClaimStatus !== CLAIM_STATUSES.ACCEPTED
+  );
+  const editDisabled = Boolean(terminal || pendingApproval);
+  const closeDisabled = Boolean(terminal);
 
   return [
     new ActionRowBuilder().addComponents(
