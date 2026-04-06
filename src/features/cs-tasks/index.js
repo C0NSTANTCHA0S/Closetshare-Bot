@@ -1918,13 +1918,10 @@ function createFeature({ featureSlug, createFeatureDb }) {
         .setDescription("Create a Closet Share task event. Owner only.")
         .addStringOption((option) =>
           option
-            .setName("type")
-            .setDescription("Task type")
+            .setName("title")
+            .setDescription("Short task title")
             .setRequired(true)
-            .addChoices(
-              { name: "Single", value: "single" },
-              { name: "Multiple", value: "multiple" }
-            )
+            .setMaxLength(90)
         )
         .addStringOption((option) =>
           option
@@ -1942,10 +1939,13 @@ function createFeature({ featureSlug, createFeatureDb }) {
         )
         .addStringOption((option) =>
           option
-            .setName("title")
-            .setDescription("Short task title")
-            .setRequired(false)
-            .setMaxLength(90)
+            .setName("type")
+            .setDescription("Task type")
+            .setRequired(true)
+            .addChoices(
+              { name: "Single", value: "single" },
+              { name: "Multiple", value: "multiple" }
+            )
         ),
       async execute(interaction) {
         const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
@@ -1955,10 +1955,10 @@ function createFeature({ featureSlug, createFeatureDb }) {
           return reply(interaction, { content: "This command can only be used in a server text channel.", ephemeral: true });
         }
 
-        const taskType = interaction.options.getString("type", true);
+        const title = truncate(interaction.options.getString("title", true).trim(), 90);
         const details = interaction.options.getString("details", true).trim();
-        const title = truncate(interaction.options.getString("title") || details, 90);
         const coinReward = interaction.options.getInteger("coins", true);
+        const taskType = interaction.options.getString("type", true);
 
         const result = insertTaskStmt.run(
           interaction.guildId,
