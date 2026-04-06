@@ -83,8 +83,9 @@ function isOwnerOrAdmin(interaction) {
 }
 
 function canManageTask(interaction, task) {
+  if (interaction.user.id === task.created_by) return true;
   if (!interaction.inGuild()) return false;
-  return isOwnerOrAdmin(interaction) || interaction.user.id === task.created_by;
+  return isOwnerOrAdmin(interaction);
 }
 
 function ensureOwnerOrAdminAccess(interaction) {
