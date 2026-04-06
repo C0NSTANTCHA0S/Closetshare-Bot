@@ -194,6 +194,8 @@ function buildTaskEmbed(task, stats, latestClaim) {
 
   const thumbnailUrl = safeEmbedUrl(config.leaderboardThumbnailUrl);
   if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
+  const imageUrl = safeEmbedUrl(config.csTaskEmbedImageUrl);
+  if (imageUrl) embed.setImage(imageUrl);
 
   if (stats.approved_count > 0 || stats.accepted_count > 0) {
     embed.addFields(
