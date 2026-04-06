@@ -1902,6 +1902,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
               { name: "Multiple", value: "multiple" }
             )
         )
+        .addStringOption((option) => option.setName("title").setDescription("Short task title").setRequired(false).setMaxLength(90))
         .addStringOption((option) =>
           option
             .setName("details")
