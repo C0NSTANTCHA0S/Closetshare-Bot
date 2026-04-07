@@ -20,6 +20,7 @@ const config = {
   dataDir: path.resolve(rootDir, process.env.DATA_DIR || "./data"),
   economyDbPath: path.resolve(rootDir, process.env.DATA_DIR || "./data", "economy", "economy.sqlite"),
   ownerRoleId: process.env.OWNER_ROLE_ID || "",
+  csTaskChannelId: process.env.CS_TASK_CHANNEL_ID || "",
   leaderboardChannelId: process.env.COINS_LEADERBOARD_CHANNEL_ID || "",
   leaderboardThumbnailUrl: process.env.COINS_LEADERBOARD_THUMBNAIL_URL || "",
   leaderboardImageUrl: process.env.COINS_LEADERBOARD_IMAGE_URL || "",
