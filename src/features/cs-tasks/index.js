@@ -1954,6 +1954,12 @@ function createFeature({ featureSlug, createFeatureDb }) {
         if (!interaction.inGuild() || !interaction.channel || typeof interaction.channel.send !== "function") {
           return reply(interaction, { content: "This command can only be used in a server text channel.", ephemeral: true });
         }
+        if (config.csTaskChannelId && interaction.channelId !== config.csTaskChannelId) {
+          return reply(interaction, {
+            content: `Tasks can only be created in <#${config.csTaskChannelId}>.`,
+            ephemeral: true
+          });
+        }
 
         const title = truncate(interaction.options.getString("title", true).trim(), 90);
         const details = interaction.options.getString("details", true).trim();
