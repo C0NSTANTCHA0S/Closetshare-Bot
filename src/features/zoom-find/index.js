@@ -15,6 +15,16 @@ const { ensureOwnerAccess, logDiscordPayloadError, makeEmbed, reply, safeEmbedUr
 
 const ZOOM_FIND_REWARD = 50;
 const ZOOM_FIND_GUESS_LIMIT = 10;
+const ZOOM_FIND_TITLE = "🔎 Zoom-Find — Can You Guess What It Is?";
+const ZOOM_FIND_DESCRIPTION = [
+  "Owner posts a zoomed-in image that is hard to identify.",
+  "",
+  "**How it works:**",
+  "• Click **Take a Guess** to submit your answer privately.",
+  "• The embed shows only the **last 10 guesses**.",
+  "• Owner clicks **Choose Winner** and awards **50 coins**.",
+  "• Owner clicks **Clear Guesses** to reset the round."
+].join("\n");
 
 const TAKE_GUESS_PREFIX = "zoom-find:guess:";
 const CHOOSE_WINNER_PREFIX = "zoom-find:choose:";
@@ -215,13 +225,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
       {
         data: new SlashCommandBuilder()
           .setName("post-zoom")
-          .setDescription("Post a Zoom Find embed with guessing buttons. Owner only.")
-          .addStringOption((option) =>
-            option.setName("title").setDescription("Embed title (optional)").setRequired(false)
-          )
-          .addStringOption((option) =>
-            option.setName("description").setDescription("Embed description/instructions (optional)").setRequired(false)
-          ),
+          .setDescription("Post the Zoom Find embed with guessing buttons. Owner only."),
         async execute(interaction, { client }) {
           const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
           if (denied) return denied;
@@ -237,13 +241,19 @@ function createFeature({ featureSlug, createFeatureDb }) {
             });
           }
 
-          const title = interaction.options.getString("title") || "Zoom Find";
-          const description = interaction.options.getString("description") || null;
+          const targetChannelId = config.zoomFindChannelId || interaction.channelId;
+          const targetChannel = await client.channels.fetch(targetChannelId).catch(() => null);
+          if (!targetChannel || !targetChannel.isTextBased()) {
+            return reply(interaction, {
+              content: "I couldn't find the configured Zoom Find channel to post in.",
+              ephemeral: true
+            });
+          }
 
           const placeholder = {
             id: 0,
-            title,
-            description,
+            title: ZOOM_FIND_TITLE,
+            description: ZOOM_FIND_DESCRIPTION,
             image_url: imageUrl,
             thumbnail_url: thumbnailUrl,
             winner_user_id: null
@@ -256,7 +266,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
 
           let message;
           try {
-            message = await interaction.channel.send(payload);
+            message = await targetChannel.send(payload);
           } catch (error) {
             logDiscordPayloadError("zoom-find:initial-post", error, payload);
             throw error;
@@ -267,8 +277,8 @@ function createFeature({ featureSlug, createFeatureDb }) {
             message.channelId,
             message.id,
             interaction.user.id,
-            title,
-            description,
+            ZOOM_FIND_TITLE,
+            ZOOM_FIND_DESCRIPTION,
             imageUrl,
             thumbnailUrl
           );
