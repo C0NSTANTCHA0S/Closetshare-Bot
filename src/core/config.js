@@ -31,7 +31,10 @@ const config = {
   spinWheelResult1MediaUrl: process.env.SPIN_WHEEL_RESULT_1_MEDIA_URL || "",
   spinWheelResult2MediaUrl: process.env.SPIN_WHEEL_RESULT_2_MEDIA_URL || "",
   spinWheelResult3MediaUrl: process.env.SPIN_WHEEL_RESULT_3_MEDIA_URL || "",
-  spinWheelResult4MediaUrl: process.env.SPIN_WHEEL_RESULT_4_MEDIA_URL || ""
+  spinWheelResult4MediaUrl: process.env.SPIN_WHEEL_RESULT_4_MEDIA_URL || "",
+  zoomFindChannelId: process.env.ZOOM_FIND_CHANNEL_ID || "",
+  zoomFindImageUrl: process.env.ZOOM_FIND_IMAGE_URL || "",
+  zoomFindThumbnailUrl: process.env.ZOOM_FIND_THUMBNAIL_URL || ""
 };
 
 module.exports = { config };
