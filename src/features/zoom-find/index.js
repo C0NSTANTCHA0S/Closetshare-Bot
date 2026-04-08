@@ -47,6 +47,13 @@ function sanitizeGuess(value) {
     .slice(0, 120);
 }
 
+function sanitizeHint(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
 function normalizeGuess(value) {
   return sanitizeGuess(value).toLowerCase();
 }
@@ -97,6 +104,10 @@ function buildZoomFindEmbed(round, guesses) {
   embed.addFields({ name: "Status", value: statusLabel, inline: true });
   embed.addFields({ name: "Answer Set", value: round.item_name ? "Yes" : "No", inline: true });
 
+  if (round.hint_text) {
+    embed.addFields({ name: "Hint", value: round.hint_text });
+  }
+
   if (round.winner_user_id) {
     embed.addFields({
       name: "Winner",
@@ -143,6 +154,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
       thumbnail_url TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
       item_name TEXT,
+      hint_text TEXT,
       item_set_at TEXT,
       winner_user_id TEXT,
       winner_awarded_at TEXT,
@@ -168,6 +180,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
 
   const roundColumns = new Set(db.prepare(`PRAGMA table_info(zoom_find_rounds)`).all().map((column) => column.name));
   if (!roundColumns.has("item_name")) db.exec(`ALTER TABLE zoom_find_rounds ADD COLUMN item_name TEXT`);
+  if (!roundColumns.has("hint_text")) db.exec(`ALTER TABLE zoom_find_rounds ADD COLUMN hint_text TEXT`);
   if (!roundColumns.has("item_set_at")) db.exec(`ALTER TABLE zoom_find_rounds ADD COLUMN item_set_at TEXT`);
   if (!roundColumns.has("cancelled_at")) db.exec(`ALTER TABLE zoom_find_rounds ADD COLUMN cancelled_at TEXT`);
 
@@ -179,7 +192,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
 
   const getRoundByIdStmt = db.prepare(`
     SELECT id, guild_id, channel_id, message_id, owner_user_id, title, description, image_url, thumbnail_url,
-           status, item_name, item_set_at, winner_user_id, winner_awarded_at, cancelled_at, created_at, updated_at
+           status, item_name, hint_text, item_set_at, winner_user_id, winner_awarded_at, cancelled_at, created_at, updated_at
     FROM zoom_find_rounds
     WHERE id = ?
   `);
@@ -217,6 +230,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
   const setItemNameStmt = db.prepare(`
     UPDATE zoom_find_rounds
     SET item_name = ?,
+        hint_text = ?,
         item_set_at = datetime('now'),
         status = 'active',
         cancelled_at = NULL,
@@ -227,6 +241,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
   const resetRoundStateStmt = db.prepare(`
     UPDATE zoom_find_rounds
     SET item_name = NULL,
+        hint_text = NULL,
         item_set_at = NULL,
         winner_user_id = NULL,
         winner_awarded_at = NULL,
@@ -239,6 +254,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
   const cancelRoundStateStmt = db.prepare(`
     UPDATE zoom_find_rounds
     SET item_name = NULL,
+        hint_text = NULL,
         item_set_at = NULL,
         winner_user_id = NULL,
         winner_awarded_at = NULL,
@@ -316,6 +332,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
             thumbnail_url: thumbnailUrl,
             status: "active",
             item_name: null,
+            hint_text: null,
             winner_user_id: null
           };
 
@@ -412,6 +429,15 @@ function createFeature({ featureSlug, createFeatureDb }) {
                 .setRequired(true)
                 .setMaxLength(120)
                 .setPlaceholder("Example: Purple knitted sweater")
+            ),
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId("hint_text")
+                .setLabel("Hint (optional)")
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(false)
+                .setMaxLength(240)
+                .setPlaceholder("Example: You wear this in winter")
             )
           );
 
@@ -493,7 +519,8 @@ function createFeature({ featureSlug, createFeatureDb }) {
             });
           }
 
-          setItemNameStmt.run(itemName, roundId);
+          const hintText = sanitizeHint(interaction.fields.getTextInputValue("hint_text"));
+          setItemNameStmt.run(itemName, hintText || null, roundId);
           await updateRoundMessage(client, roundId);
 
           return reply(interaction, {
