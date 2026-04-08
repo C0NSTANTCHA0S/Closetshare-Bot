@@ -27,6 +27,7 @@ const config = {
   csTaskEmbedImageUrl: process.env.CS_TASK_EMBED_IMAGE_URL || "",
   spinWheelChannelId: process.env.SPIN_WHEEL_CHANNEL_ID || "",
   spinWheelStaticImageUrl: process.env.SPIN_WHEEL_STATIC_IMAGE_URL || "",
+  spinWheelThumbnailUrl: process.env.SPIN_WHEEL_THUMBNAIL_URL || "",
   spinWheelResult1MediaUrl: process.env.SPIN_WHEEL_RESULT_1_MEDIA_URL || "",
   spinWheelResult2MediaUrl: process.env.SPIN_WHEEL_RESULT_2_MEDIA_URL || "",
   spinWheelResult3MediaUrl: process.env.SPIN_WHEEL_RESULT_3_MEDIA_URL || "",

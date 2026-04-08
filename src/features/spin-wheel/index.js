@@ -1,6 +1,6 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder } = require("discord.js");
+const { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder } = require("discord.js");
 const { config } = require("../../core/config");
-const { makeEmbed, reply, safeEmbedUrl, ensureOwnerAccess } = require("../../core/discord-helpers");
+const { makeEmbed, reply, safeEmbedUrl, ensureOwnerAccess, memberHasRoleId } = require("../../core/discord-helpers");
 const { applyCoinDelta, getCoinBalance } = require("../../core/economy-db");
 const { syncLeaderboardMessage } = require("../../core/economy-leaderboard");
 
@@ -79,10 +79,15 @@ function createFeature({ featureSlug, createFeatureDb }) {
       embed.setImage(imageUrl);
     }
 
+    const thumbnailUrl = safeEmbedUrl(config.spinWheelThumbnailUrl);
+    if (thumbnailUrl) {
+      embed.setThumbnail(thumbnailUrl);
+    }
+
     return embed;
   }
 
-  function buildResultPayload({ outcome, appliedAmount, balanceAfter, mediaUrl }) {
+  async function buildResultPayload({ outcome, appliedAmount, balanceAfter, mediaUrl }) {
     const fields = [
       { name: "Wheel landed on", value: `**${rewardText(outcome.reward)}**`, inline: true },
       { name: "Applied", value: `**${rewardText(appliedAmount)}**`, inline: true },
@@ -103,15 +108,36 @@ function createFeature({ featureSlug, createFeatureDb }) {
       footer: "You can spin again in 24 hours."
     });
 
-    if (mediaUrl && /\.(gif|png|jpe?g|webp)$/i.test(mediaUrl)) {
-      embed.setImage(mediaUrl);
-    }
-
-    return {
+    const payload = {
       embeds: [embed],
-      content: mediaUrl && !/\.(gif|png|jpe?g|webp)$/i.test(mediaUrl) ? `Spin replay: ${mediaUrl}` : undefined,
       ephemeral: true
     };
+
+    if (!mediaUrl) {
+      return payload;
+    }
+
+    if (/\.(gif|png|jpe?g|webp)$/i.test(mediaUrl)) {
+      embed.setImage(mediaUrl);
+      return payload;
+    }
+
+    try {
+      const response = await fetch(mediaUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const contentType = (response.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.startsWith("video/")) {
+        return payload;
+      }
+
+      const extension = contentType.includes("mp4") ? "mp4" : contentType.includes("webm") ? "webm" : "mov";
+      const mediaBuffer = Buffer.from(await response.arrayBuffer());
+      payload.files = [new AttachmentBuilder(mediaBuffer, { name: `spin-result.${extension}` })];
+      return payload;
+    } catch {
+      return payload;
+    }
   }
 
   return {
@@ -158,7 +184,8 @@ function createFeature({ featureSlug, createFeatureDb }) {
           const guildId = interaction.guildId || "dm";
           const userId = interaction.user.id;
 
-          const remainingMs = getRemainingCooldownMs(guildId, userId);
+          const isOwner = memberHasRoleId(interaction, config.ownerRoleId);
+          const remainingMs = isOwner ? 0 : getRemainingCooldownMs(guildId, userId);
           if (remainingMs > 0) {
             return reply(interaction, {
               content: `You already spun recently. Try again in **${formatRemainingTime(remainingMs)}**.`,
@@ -193,7 +220,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
 
           return reply(
             interaction,
-            buildResultPayload({
+            await buildResultPayload({
               outcome,
               appliedAmount,
               balanceAfter: result.balance,
