@@ -17,12 +17,12 @@ const ZOOM_FIND_REWARD = 50;
 const ZOOM_FIND_GUESS_LIMIT = 10;
 const ZOOM_FIND_TITLE = "🔎 Zoom-Find — Can You Guess What It Is?";
 const ZOOM_FIND_DESCRIPTION = [
-  "Owner posts a zoomed-in image that is hard to identify.",
+  "Scroll down to see the post of a zoomed-in image that is hard to identify.",
   "",
   "**How it works:**",
-  "• Click **Take a Guess** to submit your answer privately.",
-  "• The embed shows only the **last 10 guesses**.",
-  "• Owner clicks **Choose Winner** and awards **50 coins**.",
+  "• Click **Take a Guess** to submit and post your answer.",
+  "• The **last 10 guesses** are shown below.",
+  "• Owner clicks **Choose Winner** and awards **50 coins** when someone guesses correctly.",
   "• Owner clicks **Clear Guesses** to reset the round."
 ].join("\n");
 
