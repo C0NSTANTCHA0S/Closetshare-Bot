@@ -34,7 +34,16 @@ const config = {
   spinWheelResult4MediaUrl: process.env.SPIN_WHEEL_RESULT_4_MEDIA_URL || "",
   zoomFindChannelId: process.env.ZOOM_FIND_CHANNEL_ID || "",
   zoomFindImageUrl: process.env.ZOOM_FIND_IMAGE_URL || "",
-  zoomFindThumbnailUrl: process.env.ZOOM_FIND_THUMBNAIL_URL || ""
+  zoomFindThumbnailUrl: process.env.ZOOM_FIND_THUMBNAIL_URL || "",
+  dailyLoginChannelId: process.env.DAILY_LOGIN_CHANNEL_ID || "",
+  shiftVerifyChannelId: process.env.SHIFT_VERIFY_CHANNEL_ID || "",
+  shiftTimezone: process.env.SHIFT_TIMEZONE || "UTC",
+  shiftWindowsJson: process.env.SHIFT_WINDOWS_JSON || "[]",
+  shiftAutopostEnabled: (process.env.SHIFT_AUTOPOST_ENABLED || "true").toLowerCase() !== "false",
+  shiftAutopostLeadMinutes: process.env.SHIFT_AUTOPOST_LEAD_MINUTES || "15",
+  shiftPayoutCoins: process.env.SHIFT_PAYOUT_COINS || "15",
+  dailyLoginImageUrl: process.env.DAILY_LOGIN_IMAGE_URL || "",
+  dailyLoginThumbnailUrl: process.env.DAILY_LOGIN_THUMBNAIL_URL || ""
 };
 
 module.exports = { config };
