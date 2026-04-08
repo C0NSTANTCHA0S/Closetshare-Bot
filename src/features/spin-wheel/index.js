@@ -1,8 +1,24 @@
-const { SlashCommandBuilder } = require("discord.js");
-const { makeEmbed, reply } = require("../../core/discord-helpers");
-const { applyCoinDelta } = require("../../core/economy-db");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder } = require("discord.js");
+const { config } = require("../../core/config");
+const { makeEmbed, reply, safeEmbedUrl, ensureOwnerAccess } = require("../../core/discord-helpers");
+const { applyCoinDelta, getCoinBalance } = require("../../core/economy-db");
+const { syncLeaderboardMessage } = require("../../core/economy-leaderboard");
 
-function createFeature({ featureName, featureSlug, createFeatureDb }) {
+const SPIN_WHEEL_BUTTON_ID = "spin_wheel_spin";
+const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+const SPIN_OUTCOMES = [
+  { reward: 5, mediaUrl: config.spinWheelResult1MediaUrl },
+  { reward: 25, mediaUrl: config.spinWheelResult2MediaUrl },
+  { reward: 50, mediaUrl: config.spinWheelResult3MediaUrl },
+  { reward: -10, mediaUrl: config.spinWheelResult4MediaUrl }
+];
+
+function rewardText(amount) {
+  return amount >= 0 ? `+${amount} coins` : `${amount} coins`;
+}
+
+function createFeature({ featureSlug, createFeatureDb }) {
   const { db, dbPath } = createFeatureDb(featureSlug, "spinwheel.sqlite");
 
   db.exec(`
@@ -20,7 +36,83 @@ function createFeature({ featureName, featureSlug, createFeatureDb }) {
     VALUES (?, ?, ?)
   `);
 
-  const rewards = [0, 5, 10, 15, 20, 25];
+  const lastSpinStmt = db.prepare(`
+    SELECT created_at
+    FROM spins
+    WHERE guild_id = ? AND user_id = ?
+    ORDER BY id DESC
+    LIMIT 1
+  `);
+
+  function getRandomOutcome() {
+    return SPIN_OUTCOMES[Math.floor(Math.random() * SPIN_OUTCOMES.length)];
+  }
+
+  function getRemainingCooldownMs(guildId, userId) {
+    const row = lastSpinStmt.get(guildId, userId);
+    if (!row?.created_at) return 0;
+
+    const lastSpinAtMs = Date.parse(`${row.created_at}Z`);
+    if (Number.isNaN(lastSpinAtMs)) return 0;
+
+    const elapsed = Date.now() - lastSpinAtMs;
+    return elapsed >= SPIN_COOLDOWN_MS ? 0 : SPIN_COOLDOWN_MS - elapsed;
+  }
+
+  function formatRemainingTime(ms) {
+    const totalMinutes = Math.ceil(ms / 60000);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours <= 0) return `${minutes}m`;
+    if (minutes === 0) return `${hours}h`;
+    return `${hours}h ${minutes}m`;
+  }
+
+  function buildWheelEmbed() {
+    const embed = makeEmbed({
+      title: "Spin the Wheel",
+      description: "Click **Spin the Wheel** below to spin once every 24 hours and win (or lose) coins."
+    });
+
+    const imageUrl = safeEmbedUrl(config.spinWheelStaticImageUrl);
+    if (imageUrl) {
+      embed.setImage(imageUrl);
+    }
+
+    return embed;
+  }
+
+  function buildResultPayload({ outcome, appliedAmount, balanceAfter, mediaUrl }) {
+    const fields = [
+      { name: "Wheel landed on", value: `**${rewardText(outcome.reward)}**`, inline: true },
+      { name: "Applied", value: `**${rewardText(appliedAmount)}**`, inline: true },
+      { name: "New balance", value: `**${balanceAfter}** coins`, inline: true }
+    ];
+
+    if (outcome.reward < 0 && appliedAmount !== outcome.reward) {
+      fields.push({
+        name: "Note",
+        value: "You cannot go below 0 coins, so only your available balance was deducted."
+      });
+    }
+
+    const embed = makeEmbed({
+      title: "Spin result",
+      description: appliedAmount >= 0 ? "Nice spin!" : "Tough spin — better luck on the next one.",
+      fields,
+      footer: "You can spin again in 24 hours."
+    });
+
+    if (mediaUrl && /\.(gif|png|jpe?g|webp)$/i.test(mediaUrl)) {
+      embed.setImage(mediaUrl);
+    }
+
+    return {
+      embeds: [embed],
+      content: mediaUrl && !/\.(gif|png|jpe?g|webp)$/i.test(mediaUrl) ? `Spin replay: ${mediaUrl}` : undefined,
+      ephemeral: true
+    };
+  }
 
   return {
     db,
@@ -28,32 +120,86 @@ function createFeature({ featureName, featureSlug, createFeatureDb }) {
     commands: [
       {
         data: new SlashCommandBuilder()
-          .setName("spin")
-          .setDescription("Spin a simple reward wheel."),
-        async execute(interaction) {
-          const reward = rewards[Math.floor(Math.random() * rewards.length)];
-          insertSpinStmt.run(interaction.guildId || "dm", interaction.user.id, reward);
+          .setName("post-wheel")
+          .setDescription("Post the spin wheel embed with a Spin the Wheel button."),
+        async execute(interaction, { client }) {
+          const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
+          if (denied) return denied;
 
-          if (reward > 0) {
-            applyCoinDelta({
-              guildId: interaction.guildId || "dm",
-              userId: interaction.user.id,
-              amount: reward,
-              reason: "Spin wheel reward",
-              createdBy: interaction.user.id,
-              source: "spin_wheel"
+          const targetChannelId = config.spinWheelChannelId || interaction.channelId;
+          const channel = await client.channels.fetch(targetChannelId);
+          if (!channel || !channel.isTextBased()) {
+            return reply(interaction, {
+              content: "I couldn't find a text channel to post the wheel embed.",
+              ephemeral: true
             });
           }
 
-          return reply(interaction, {
-            embeds: [
-              makeEmbed({
-                title: "Spin result",
-                description: reward > 0 ? `You won **${reward}** coins.` : `No coins this time.`,
-                footer: "Spin rewards are applied to your persistent coin balance."
-              })
+          await channel.send({
+            embeds: [buildWheelEmbed()],
+            components: [
+              new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(SPIN_WHEEL_BUTTON_ID).setLabel("Spin the Wheel").setStyle(ButtonStyle.Primary)
+              )
             ]
           });
+
+          return reply(interaction, {
+            content: `Spin wheel posted in <#${channel.id}>.`,
+            ephemeral: true
+          });
+        }
+      }
+    ],
+    buttons: [
+      {
+        customId: SPIN_WHEEL_BUTTON_ID,
+        async execute(interaction, { client }) {
+          const guildId = interaction.guildId || "dm";
+          const userId = interaction.user.id;
+
+          const remainingMs = getRemainingCooldownMs(guildId, userId);
+          if (remainingMs > 0) {
+            return reply(interaction, {
+              content: `You already spun recently. Try again in **${formatRemainingTime(remainingMs)}**.`,
+              ephemeral: true
+            });
+          }
+
+          const outcome = getRandomOutcome();
+          const currentBalance = getCoinBalance(guildId, userId);
+          const appliedAmount = outcome.reward < 0 ? -Math.min(Math.abs(outcome.reward), currentBalance) : outcome.reward;
+
+          const result =
+            appliedAmount === 0
+              ? { balance: currentBalance }
+              : applyCoinDelta({
+                  guildId,
+                  userId,
+                  amount: appliedAmount,
+                  reason: "Spin wheel reward",
+                  createdBy: userId,
+                  source: "spin_wheel"
+                });
+
+          insertSpinStmt.run(guildId, userId, outcome.reward);
+
+          await syncLeaderboardMessage({
+            client,
+            guildId: interaction.guildId,
+            channelId: config.leaderboardChannelId,
+            forcePost: false
+          }).catch(() => null);
+
+          return reply(
+            interaction,
+            buildResultPayload({
+              outcome,
+              appliedAmount,
+              balanceAfter: result.balance,
+              mediaUrl: safeEmbedUrl(outcome.mediaUrl)
+            })
+          );
         }
       }
     ]

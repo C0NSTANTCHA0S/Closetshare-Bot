@@ -24,7 +24,13 @@ const config = {
   leaderboardChannelId: process.env.COINS_LEADERBOARD_CHANNEL_ID || "",
   leaderboardThumbnailUrl: process.env.COINS_LEADERBOARD_THUMBNAIL_URL || "",
   leaderboardImageUrl: process.env.COINS_LEADERBOARD_IMAGE_URL || "",
-  csTaskEmbedImageUrl: process.env.CS_TASK_EMBED_IMAGE_URL || ""
+  csTaskEmbedImageUrl: process.env.CS_TASK_EMBED_IMAGE_URL || "",
+  spinWheelChannelId: process.env.SPIN_WHEEL_CHANNEL_ID || "",
+  spinWheelStaticImageUrl: process.env.SPIN_WHEEL_STATIC_IMAGE_URL || "",
+  spinWheelResult1MediaUrl: process.env.SPIN_WHEEL_RESULT_1_MEDIA_URL || "",
+  spinWheelResult2MediaUrl: process.env.SPIN_WHEEL_RESULT_2_MEDIA_URL || "",
+  spinWheelResult3MediaUrl: process.env.SPIN_WHEEL_RESULT_3_MEDIA_URL || "",
+  spinWheelResult4MediaUrl: process.env.SPIN_WHEEL_RESULT_4_MEDIA_URL || ""
 };
 
 module.exports = { config };
