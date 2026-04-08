@@ -6,9 +6,11 @@ const {
 } = require("discord.js");
 const { config } = require("../../core/config");
 const { applyCoinDelta } = require("../../core/economy-db");
+const { syncLeaderboardMessage } = require("../../core/economy-leaderboard");
 const { ensureOwnerAccess, makeEmbed, reply, safeEmbedUrl } = require("../../core/discord-helpers");
 
 const DAILY_SIGNIN_PREFIX = "daily_signin:";
+const DAILY_UNAVAILABLE_PREFIX = "daily_unavailable:";
 const DAILY_CANCEL_PREFIX = "daily_cancel:";
 const DAILY_APPROVE_PREFIX = "daily_approve:";
 const DAILY_REJECT_PREFIX = "daily_reject:";
@@ -16,6 +18,12 @@ const DAILY_REJECT_PREFIX = "daily_reject:";
 const SHIFT_REWARD_COINS = Math.max(1, Number(config.shiftPayoutCoins) || 15);
 const AUTOPOST_LEAD_MINUTES = Math.max(0, Number(config.shiftAutopostLeadMinutes) || 15);
 const SCHEDULER_INTERVAL_MS = 60_000;
+const STATUS_COLORS = {
+  scheduled: 0x2b7fff,
+  approved: 0x2ecc71,
+  rejected: 0xf1c40f,
+  cancelled: 0xe74c3c
+};
 
 function parseClockMinutes(value) {
   const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -112,7 +120,25 @@ function formatShiftRange(shift) {
   return `${formatClock(shift.start_minutes)} - ${formatClock(shift.end_minutes)}`;
 }
 
+function parseDateTimeInput(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return null;
+  return `${match[1]}-${match[2]}-${match[3]} ${match[4]}:${match[5]}`;
+}
+
 function buildDailyShiftPayload(shift, signInCount = 0) {
+  const status = String(shift.status || "scheduled").toLowerCase();
+  const isLocked = status !== "scheduled";
+  const signInLocked = isLocked || signInCount > 0;
+  const statusText = status.charAt(0).toUpperCase() + status.slice(1);
+
   const embed = makeEmbed({
     title: "Daily Shift Report",
     description:
@@ -120,7 +146,9 @@ function buildDailyShiftPayload(shift, signInCount = 0) {
       `**Shift:** ${shift.shift_key}\n` +
       `**Date:** ${shift.shift_date}\n` +
       `**Time:** ${formatShiftRange(shift)} (${config.shiftTimezone})\n` +
-      `**Sign-ins:** ${signInCount}`,
+      `**Sign-ins:** ${signInCount}\n` +
+      `**Status:** ${statusText}`,
+    color: STATUS_COLORS[status] || STATUS_COLORS.scheduled,
     fields: [
       {
         name: "Payout Policy",
@@ -138,14 +166,40 @@ function buildDailyShiftPayload(shift, signInCount = 0) {
     new ButtonBuilder()
       .setCustomId(`${DAILY_SIGNIN_PREFIX}${shift.id}`)
       .setLabel("Sign In")
-      .setStyle(ButtonStyle.Success),
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(signInLocked),
+    new ButtonBuilder()
+      .setCustomId(`${DAILY_UNAVAILABLE_PREFIX}${shift.id}`)
+      .setLabel("Not Available")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(isLocked),
     new ButtonBuilder()
       .setCustomId(`${DAILY_CANCEL_PREFIX}${shift.id}`)
       .setLabel("Cancel Shift")
       .setStyle(ButtonStyle.Danger)
+      .setDisabled(isLocked)
   );
 
   return { embeds: [embed], components: [actions] };
+}
+
+function buildEventPayload({ title, description, startAt, endAt }) {
+  const embed = makeEmbed({
+    title: title || "Closet Share Event",
+    description:
+      `${description || "Special volunteer event shift."}\n\n` +
+      `**Start:** ${startAt} (${config.shiftTimezone})\n` +
+      `**Finish:** ${endAt} (${config.shiftTimezone})\n` +
+      `**Status:** Scheduled`,
+    color: STATUS_COLORS.scheduled
+  });
+
+  const thumbnailUrl = safeEmbedUrl(config.dailyLoginThumbnailUrl);
+  const imageUrl = safeEmbedUrl(config.dailyLoginImageUrl);
+  if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
+  if (imageUrl) embed.setImage(imageUrl);
+
+  return { embeds: [embed] };
 }
 
 function createFeature({ featureSlug, createFeatureDb }) {
@@ -200,6 +254,28 @@ function createFeature({ featureSlug, createFeatureDb }) {
       FOREIGN KEY (shift_id) REFERENCES daily_shifts(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS shift_unavailability (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      shift_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (shift_id) REFERENCES daily_shifts(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS shift_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      start_at TEXT NOT NULL,
+      end_at TEXT NOT NULL,
+      post_channel_id TEXT,
+      post_message_id TEXT,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_daily_shifts_guild_date
       ON daily_shifts (guild_id, shift_date, shift_key);
 
@@ -246,6 +322,14 @@ function createFeature({ featureSlug, createFeatureDb }) {
   const addSignInStmt = db.prepare(`
     INSERT INTO shift_signins (shift_id, user_id)
     VALUES (?, ?)
+  `);
+  const removeSignInStmt = db.prepare(`
+    DELETE FROM shift_signins
+    WHERE shift_id = ? AND user_id = ?
+  `);
+  const addUnavailabilityStmt = db.prepare(`
+    INSERT INTO shift_unavailability (shift_id, user_id, reason)
+    VALUES (?, ?, ?)
   `);
 
   const signInCountStmt = db.prepare(`
@@ -297,6 +381,10 @@ function createFeature({ featureSlug, createFeatureDb }) {
     INSERT INTO shift_payouts (shift_id, user_id, coins_awarded, awarded_by)
     VALUES (?, ?, ?, ?)
   `);
+  const insertEventStmt = db.prepare(`
+    INSERT INTO shift_events (guild_id, title, description, start_at, end_at, post_channel_id, post_message_id, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
   const topAllTimeStmt = db.prepare(`
     SELECT p.user_id, COUNT(*) AS shifts
@@ -314,6 +402,18 @@ function createFeature({ featureSlug, createFeatureDb }) {
     GROUP BY p.user_id
     ORDER BY shifts DESC, p.user_id ASC
     LIMIT 1
+  `);
+  const weeklyTotalsStmt = db.prepare(`
+    SELECT COUNT(DISTINCT p.user_id) AS volunteer_count, COUNT(*) AS verified_shifts
+    FROM shift_payouts p
+    JOIN daily_shifts s ON s.id = p.shift_id
+    WHERE s.shift_date BETWEEN ? AND ?
+  `);
+  const monthlyTotalsStmt = db.prepare(`
+    SELECT COUNT(DISTINCT p.user_id) AS volunteer_count, COUNT(*) AS verified_shifts
+    FROM shift_payouts p
+    JOIN daily_shifts s ON s.id = p.shift_id
+    WHERE s.shift_date LIKE ? || '%'
   `);
 
   const insertReportStmt = db.prepare(`
@@ -403,6 +503,31 @@ function createFeature({ featureSlug, createFeatureDb }) {
       embeds: [embed],
       components: [row]
     });
+  }
+
+  async function notifyOwnersUnavailable({ interaction, shift }) {
+    const note = `<@${interaction.user.id}> marked themselves unavailable for **${shift.shift_key}** on **${shift.shift_date}**.`;
+
+    if (config.ownerRoleId && interaction.guild) {
+      const role = await interaction.guild.roles.fetch(config.ownerRoleId).catch(() => null);
+      if (role?.members?.size) {
+        for (const member of role.members.values()) {
+          if (member.user.bot) continue;
+          await member.send(note).catch(() => null);
+        }
+      }
+    }
+
+    if (config.shiftVerifyChannelId && interaction.guild) {
+      const verifyChannel = await interaction.guild.channels.fetch(config.shiftVerifyChannelId).catch(() => null);
+      if (verifyChannel?.isTextBased()) {
+        await verifyChannel
+          .send({
+            content: config.ownerRoleId ? `<@&${config.ownerRoleId}> ${note}` : note
+          })
+          .catch(() => null);
+      }
+    }
   }
 
   async function runAutoPosting({ client }) {
@@ -567,12 +692,102 @@ function createFeature({ featureSlug, createFeatureDb }) {
       },
       {
         data: new SlashCommandBuilder()
+          .setName("post-event")
+          .setDescription("Post a custom volunteer event shift embed.")
+          .addStringOption((option) =>
+            option.setName("title").setDescription("Event title").setRequired(true).setMaxLength(120)
+          )
+          .addStringOption((option) =>
+            option.setName("description").setDescription("Event description").setRequired(true).setMaxLength(2000)
+          )
+          .addStringOption((option) =>
+            option
+              .setName("start")
+              .setDescription("Start datetime in YYYY-MM-DD HH:MM")
+              .setRequired(true)
+              .setMaxLength(16)
+          )
+          .addStringOption((option) =>
+            option
+              .setName("end")
+              .setDescription("End datetime in YYYY-MM-DD HH:MM")
+              .setRequired(true)
+              .setMaxLength(16)
+          ),
+        async execute(interaction) {
+          const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
+          if (denied) return denied;
+
+          if (!interaction.guild) {
+            return reply(interaction, { content: "This command can only be used in a server.", ephemeral: true });
+          }
+
+          const title = interaction.options.getString("title", true).trim();
+          const description = interaction.options.getString("description", true).trim();
+          const startAt = parseDateTimeInput(interaction.options.getString("start", true));
+          const endAt = parseDateTimeInput(interaction.options.getString("end", true));
+
+          if (!startAt || !endAt) {
+            return reply(interaction, {
+              content: "Start/end must use format `YYYY-MM-DD HH:MM`.",
+              ephemeral: true
+            });
+          }
+          if (endAt <= startAt) {
+            return reply(interaction, {
+              content: "End datetime must be after start datetime.",
+              ephemeral: true
+            });
+          }
+
+          const channelId = config.dailyLoginChannelId || interaction.channelId;
+          const targetChannel = await interaction.guild.channels.fetch(channelId).catch(() => null);
+          if (!targetChannel || !targetChannel.isTextBased()) {
+            return reply(interaction, {
+              content: "Configured daily login channel is missing or not text-based.",
+              ephemeral: true
+            });
+          }
+
+          const payload = buildEventPayload({ title, description, startAt, endAt });
+          const message = await targetChannel.send(payload);
+          insertEventStmt.run(
+            interaction.guildId || "dm",
+            title,
+            description,
+            startAt,
+            endAt,
+            targetChannel.id,
+            message.id,
+            interaction.user.id
+          );
+
+          return reply(interaction, {
+            content: `Posted event shift in <#${targetChannel.id}>.`,
+            ephemeral: true
+          });
+        }
+      },
+      {
+        data: new SlashCommandBuilder()
           .setName("post-shift-stats")
           .setDescription("Post volunteer shift stats for attendance and recognition."),
         async execute(interaction) {
           const allTime = topAllTimeStmt.all();
-          const monthKey = getMonthKey(new Date(), config.shiftTimezone);
+          const now = new Date();
+          const monthKey = getMonthKey(now, config.shiftTimezone);
           const topMonth = topMonthStmt.get(monthKey);
+          const weekStartDate = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+          const weekStartKey = getDateKey(weekStartDate, config.shiftTimezone);
+          const todayKey = getDateKey(now, config.shiftTimezone);
+          const weeklyTotals = weeklyTotalsStmt.get(weekStartKey, todayKey) || {
+            volunteer_count: 0,
+            verified_shifts: 0
+          };
+          const monthlyTotals = monthlyTotalsStmt.get(monthKey) || {
+            volunteer_count: 0,
+            verified_shifts: 0
+          };
 
           const allTimeText = allTime.length
             ? allTime.map((row, index) => `${index + 1}. <@${row.user_id}> — **${row.shifts}** shifts`).join("\n")
@@ -582,16 +797,22 @@ function createFeature({ featureSlug, createFeatureDb }) {
             ? `<@${topMonth.user_id}> with **${topMonth.shifts}** verified shifts in ${monthKey}.`
             : `No verified shifts yet for ${monthKey}.`;
 
+          const totalsText = `**Weekly (last 7 days):** ${weeklyTotals.volunteer_count || 0} volunteers across **${weeklyTotals.verified_shifts || 0}** verified shifts.\n` +
+            `**Monthly (${monthKey}):** ${monthlyTotals.volunteer_count || 0} volunteers across **${monthlyTotals.verified_shifts || 0}** verified shifts.`;
+
+          const statsEmbed = makeEmbed({
+            title: "Volunteer Shift Stats",
+            fields: [
+              { name: "Most Days Volunteered (All-Time)", value: allTimeText },
+              { name: "Volunteer of the Month", value: volunteerOfMonth },
+              { name: "Volunteer Totals", value: totalsText }
+            ]
+          });
+          const statsThumbnail = safeEmbedUrl(config.dailyLoginThumbnailUrl);
+          if (statsThumbnail) statsEmbed.setThumbnail(statsThumbnail);
+
           return reply(interaction, {
-            embeds: [
-              makeEmbed({
-                title: "Volunteer Shift Stats",
-                fields: [
-                  { name: "Most Days Volunteered (All-Time)", value: allTimeText },
-                  { name: "Volunteer of the Month", value: volunteerOfMonth }
-                ]
-              })
-            ],
+            embeds: [statsEmbed],
             ephemeral: false
           });
         }
@@ -635,6 +856,37 @@ function createFeature({ featureSlug, createFeatureDb }) {
         }
       },
       {
+        customId: /^daily_unavailable:\d+$/,
+        async execute(interaction) {
+          const shiftId = Number(interaction.customId.slice(DAILY_UNAVAILABLE_PREFIX.length));
+          const shift = getShiftStmt.get(shiftId);
+          if (!shift || shift.status !== "scheduled") {
+            return reply(interaction, {
+              content: "This shift is no longer accepting availability updates.",
+              ephemeral: true
+            });
+          }
+
+          const removed = removeSignInStmt.run(shiftId, interaction.user.id);
+          addUnavailabilityStmt.run(shiftId, interaction.user.id, "Marked unavailable");
+
+          const signInCount = signInCountStmt.get(shiftId)?.total || 0;
+          if (interaction.message?.editable) {
+            const payload = buildDailyShiftPayload(shift, signInCount);
+            await interaction.message.edit(payload).catch(() => null);
+          }
+
+          await notifyOwnersUnavailable({ interaction, shift });
+
+          return reply(interaction, {
+            content: removed.changes
+              ? `You were signed out and marked unavailable for **${shift.shift_key}** on **${shift.shift_date}**.`
+              : `You are marked unavailable for **${shift.shift_key}** on **${shift.shift_date}**.`,
+            ephemeral: true
+          });
+        }
+      },
+      {
         customId: /^daily_cancel:\d+$/,
         async execute(interaction) {
           const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
@@ -649,6 +901,12 @@ function createFeature({ featureSlug, createFeatureDb }) {
             });
           }
 
+          if (interaction.message?.editable) {
+            const updatedShift = getShiftStmt.get(shiftId);
+            const signInCount = signInCountStmt.get(shiftId)?.total || 0;
+            await interaction.message.edit(buildDailyShiftPayload(updatedShift, signInCount)).catch(() => null);
+          }
+
           return reply(interaction, {
             content: "Shift cancelled. Payout will not be processed.",
             ephemeral: true
@@ -657,7 +915,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
       },
       {
         customId: /^daily_approve:\d+$/,
-        async execute(interaction) {
+        async execute(interaction, { client }) {
           const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
           if (denied) return denied;
 
@@ -693,6 +951,21 @@ function createFeature({ featureSlug, createFeatureDb }) {
 
           approveShiftStmt.run(interaction.user.id, `Approved ${paidUsers.length} payouts`, shiftId);
 
+          if (interaction.message?.editable) {
+            const updatedShift = getShiftStmt.get(shiftId);
+            const signInCount = signInCountStmt.get(shiftId)?.total || 0;
+            await interaction.message.edit(buildDailyShiftPayload(updatedShift, signInCount)).catch(() => null);
+          }
+
+          if (interaction.guildId) {
+            await syncLeaderboardMessage({
+              client,
+              guildId: interaction.guildId,
+              channelId: config.leaderboardChannelId,
+              forcePost: false
+            }).catch(() => null);
+          }
+
           const payoutText =
             paidUsers.length > 0
               ? paidUsers.map((userId) => `<@${userId}>`).join(", ")
@@ -717,6 +990,12 @@ function createFeature({ featureSlug, createFeatureDb }) {
               content: "This shift is already reviewed.",
               ephemeral: true
             });
+          }
+
+          if (interaction.message?.editable) {
+            const updatedShift = getShiftStmt.get(shiftId);
+            const signInCount = signInCountStmt.get(shiftId)?.total || 0;
+            await interaction.message.edit(buildDailyShiftPayload(updatedShift, signInCount)).catch(() => null);
           }
 
           return reply(interaction, {
