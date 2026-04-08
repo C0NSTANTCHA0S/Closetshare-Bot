@@ -8,10 +8,10 @@ const SPIN_WHEEL_BUTTON_ID = "spin_wheel_spin";
 const SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 const SPIN_OUTCOMES = [
-  { reward: 5, mediaUrl: config.spinWheelResult1MediaUrl },
-  { reward: 25, mediaUrl: config.spinWheelResult2MediaUrl },
-  { reward: 50, mediaUrl: config.spinWheelResult3MediaUrl },
-  { reward: -10, mediaUrl: config.spinWheelResult4MediaUrl }
+  { reward: 50, weight: 12, mediaUrl: config.spinWheelResult3MediaUrl },
+  { reward: 25, weight: 28, mediaUrl: config.spinWheelResult2MediaUrl },
+  { reward: 5, weight: 55, mediaUrl: config.spinWheelResult1MediaUrl },
+  { reward: -10, weight: 5, mediaUrl: config.spinWheelResult4MediaUrl }
 ];
 
 function rewardText(amount) {
@@ -45,7 +45,15 @@ function createFeature({ featureSlug, createFeatureDb }) {
   `);
 
   function getRandomOutcome() {
-    return SPIN_OUTCOMES[Math.floor(Math.random() * SPIN_OUTCOMES.length)];
+    const roll = Math.random() * 100;
+    let cumulative = 0;
+
+    for (const outcome of SPIN_OUTCOMES) {
+      cumulative += outcome.weight;
+      if (roll < cumulative) return outcome;
+    }
+
+    return SPIN_OUTCOMES[SPIN_OUTCOMES.length - 1];
   }
 
   function getRemainingCooldownMs(guildId, userId) {
