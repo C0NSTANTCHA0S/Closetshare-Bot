@@ -164,7 +164,15 @@ function buildDailyShiftPayload(shift, signInCount = 0) {
   if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
   if (imageUrl) embed.setImage(imageUrl);
 
-  const actions = new ActionRowBuilder().addComponents(
+  return { embeds: [embed], components: [buildShiftActionRow(shift, signInCount)] };
+}
+
+function buildShiftActionRow(shift, signInCount = 0) {
+  const status = String(shift.status || "scheduled").toLowerCase();
+  const isLocked = status !== "scheduled";
+  const signInLocked = isLocked || signInCount > 0;
+
+  return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`${DAILY_SIGNIN_PREFIX}${shift.id}`)
       .setLabel("Sign In")
@@ -181,18 +189,17 @@ function buildDailyShiftPayload(shift, signInCount = 0) {
       .setStyle(ButtonStyle.Danger)
       .setDisabled(isLocked)
   );
-
-  return { embeds: [embed], components: [actions] };
 }
 
-function buildEventPayload({ title, description, startAt, endAt }) {
+function buildEventPayload({ shift, title, description, startAt, endAt, signInCount = 0 }) {
   const embed = makeEmbed({
     title: title || "Closet Share Event",
     description:
       `${description || "Special volunteer event shift."}\n\n` +
       `**Start:** ${startAt} (${config.shiftTimezone})\n` +
       `**Finish:** ${endAt} (${config.shiftTimezone})\n` +
-      `**Status:** Scheduled`,
+      `**Sign-ins:** ${signInCount}\n` +
+      `**Status:** ${String(shift.status || "scheduled")}`,
     color: STATUS_COLORS.scheduled
   });
 
@@ -201,7 +208,7 @@ function buildEventPayload({ title, description, startAt, endAt }) {
   if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
   if (imageUrl) embed.setImage(imageUrl);
 
-  return { embeds: [embed] };
+  return { embeds: [embed], components: [buildShiftActionRow(shift, signInCount)] };
 }
 
 function createFeature({ featureSlug, createFeatureDb }) {
@@ -800,6 +807,22 @@ function createFeature({ featureSlug, createFeatureDb }) {
               ephemeral: true
             });
           }
+          const startDate = startAt.slice(0, 10);
+          const endDate = endAt.slice(0, 10);
+          if (startDate !== endDate) {
+            return reply(interaction, {
+              content: "Start and end must be on the same date for event shifts.",
+              ephemeral: true
+            });
+          }
+          const startMinutes = parseClockMinutes(startAt.slice(11, 16));
+          const endMinutes = parseClockMinutes(endAt.slice(11, 16));
+          if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+            return reply(interaction, {
+              content: "Start/end times are invalid for this event shift.",
+              ephemeral: true
+            });
+          }
 
           const channelId = config.dailyLoginChannelId || interaction.channelId;
           const targetChannel = await interaction.guild.channels.fetch(channelId).catch(() => null);
@@ -810,8 +833,31 @@ function createFeature({ featureSlug, createFeatureDb }) {
             });
           }
 
-          const payload = buildEventPayload({ title, description, startAt, endAt });
+          const eventShiftKeyBase = title
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "")
+            .slice(0, 30) || "event";
+          const eventShiftKey = `${eventShiftKeyBase}-${Date.now()}`;
+          const eventShift = insertShiftStmt.get(
+            interaction.guildId || "dm",
+            startDate,
+            eventShiftKey,
+            startMinutes,
+            endMinutes,
+            interaction.user.id
+          );
+
+          const payload = buildEventPayload({
+            shift: eventShift,
+            title,
+            description,
+            startAt,
+            endAt,
+            signInCount: 0
+          });
           const message = await targetChannel.send(payload);
+          setShiftPostedStmt.run(targetChannel.id, message.id, eventShift.id);
           insertEventStmt.run(
             interaction.guildId || "dm",
             title,
