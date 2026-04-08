@@ -4,7 +4,6 @@ const {
   ButtonStyle,
   ModalBuilder,
   SlashCommandBuilder,
-  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle
 } = require("discord.js");
@@ -17,20 +16,22 @@ const ZOOM_FIND_REWARD = 50;
 const ZOOM_FIND_GUESS_LIMIT = 10;
 const ZOOM_FIND_TITLE = "🔎 Zoom-Find — Can You Guess What It Is?";
 const ZOOM_FIND_DESCRIPTION = [
-  "Scroll down to see the post of a zoomed-in image that is hard to identify.",
+  "Owner posts a zoomed-in image that is hard to identify.",
   "",
   "**How it works:**",
-  "• Click **Take a Guess** to submit and post your answer.",
-  "• The **last 10 guesses** are shown below.",
-  "• Owner clicks **Choose Winner** and awards **50 coins** when someone guesses correctly.",
-  "• Owner clicks **Clear Guesses** to reset the round."
+  "• Click **Take a Guess** to submit your answer privately.",
+  "• Owner clicks **Item Name** to set the correct answer for this round.",
+  "• The embed shows only the **last 10 guesses**.",
+  "• First member to guess correctly wins **50 coins** automatically.",
+  "• Owner can use **Reset Round** or **Cancel Round** anytime."
 ].join("\n");
 
 const TAKE_GUESS_PREFIX = "zoom-find:guess:";
-const CHOOSE_WINNER_PREFIX = "zoom-find:choose:";
-const CLEAR_GUESSES_PREFIX = "zoom-find:clear:";
+const ITEM_NAME_PREFIX = "zoom-find:item:";
+const RESET_ROUND_PREFIX = "zoom-find:reset:";
+const CANCEL_ROUND_PREFIX = "zoom-find:cancel:";
 const GUESS_MODAL_PREFIX = "zoom-find:guess-modal:";
-const WINNER_SELECT_PREFIX = "zoom-find:winner:";
+const ITEM_NAME_MODAL_PREFIX = "zoom-find:item-modal:";
 
 function parseRoundId(customId, prefix) {
   if (!customId.startsWith(prefix)) return null;
@@ -44,6 +45,16 @@ function sanitizeGuess(value) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 120);
+}
+
+function normalizeGuess(value) {
+  return sanitizeGuess(value).toLowerCase();
+}
+
+function statusColor(status) {
+  if (status === "completed") return 0x37be73;
+  if (status === "cancelled") return 0xd64545;
+  return 0x8f5bff;
 }
 
 function formatRecentGuesses(guesses) {
@@ -61,13 +72,15 @@ function formatRecentGuesses(guesses) {
 function buildZoomFindEmbed(round, guesses) {
   const embed = makeEmbed({
     title: round.title || "Zoom Find",
+    color: statusColor(round.status),
     description:
       round.description ||
       [
         "Post a zoomed-in image and let members guess what it is.",
         "• **Take a Guess**: submit your guess privately.",
-        "• **Choose Winner**: owner picks the correct guesser and awards 50 coins.",
-        "• **Clear Guesses**: owner clears all guesses from this round."
+        "• **Item Name**: owner sets the correct answer.",
+        "• First correct guess wins 50 coins automatically.",
+        "• **Reset Round** or **Cancel Round** are owner-only controls."
       ].join("\n")
   });
 
@@ -79,11 +92,24 @@ function buildZoomFindEmbed(round, guesses) {
 
   embed.addFields({ name: `Recent guesses (last ${ZOOM_FIND_GUESS_LIMIT})`, value: formatRecentGuesses(guesses) });
 
+  const statusLabel =
+    round.status === "completed" ? "✅ Completed" : round.status === "cancelled" ? "⛔ Cancelled" : "🟣 Active";
+  embed.addFields({ name: "Status", value: statusLabel, inline: true });
+  embed.addFields({ name: "Answer Set", value: round.item_name ? "Yes" : "No", inline: true });
+
   if (round.winner_user_id) {
     embed.addFields({
       name: "Winner",
       value: `<@${round.winner_user_id}> won **${ZOOM_FIND_REWARD} coins** for this round.`
     });
+  }
+
+  if (round.status === "completed" && round.item_name) {
+    embed.addFields({ name: "Item Name", value: round.item_name });
+  }
+
+  if (round.status === "cancelled") {
+    embed.addFields({ name: "Round State", value: "This round was cancelled by the owner." });
   }
 
   embed.setFooter({ text: `Round #${round.id}` });
@@ -94,8 +120,9 @@ function buildRoundButtons(roundId) {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`${TAKE_GUESS_PREFIX}${roundId}`).setLabel("Take a Guess").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`${CHOOSE_WINNER_PREFIX}${roundId}`).setLabel("Choose Winner").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`${CLEAR_GUESSES_PREFIX}${roundId}`).setLabel("Clear Guesses").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId(`${ITEM_NAME_PREFIX}${roundId}`).setLabel("Item Name").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`${RESET_ROUND_PREFIX}${roundId}`).setLabel("Reset Round").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${CANCEL_ROUND_PREFIX}${roundId}`).setLabel("Cancel Round").setStyle(ButtonStyle.Danger)
     )
   ];
 }
@@ -115,8 +142,11 @@ function createFeature({ featureSlug, createFeatureDb }) {
       image_url TEXT NOT NULL,
       thumbnail_url TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
+      item_name TEXT,
+      item_set_at TEXT,
       winner_user_id TEXT,
       winner_awarded_at TEXT,
+      cancelled_at TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -136,6 +166,11 @@ function createFeature({ featureSlug, createFeatureDb }) {
       ON zoom_find_guesses(round_id, created_at DESC, id DESC);
   `);
 
+  const roundColumns = new Set(db.prepare(`PRAGMA table_info(zoom_find_rounds)`).all().map((column) => column.name));
+  if (!roundColumns.has("item_name")) db.exec(`ALTER TABLE zoom_find_rounds ADD COLUMN item_name TEXT`);
+  if (!roundColumns.has("item_set_at")) db.exec(`ALTER TABLE zoom_find_rounds ADD COLUMN item_set_at TEXT`);
+  if (!roundColumns.has("cancelled_at")) db.exec(`ALTER TABLE zoom_find_rounds ADD COLUMN cancelled_at TEXT`);
+
   const insertRoundStmt = db.prepare(`
     INSERT INTO zoom_find_rounds (
       guild_id, channel_id, message_id, owner_user_id, title, description, image_url, thumbnail_url
@@ -144,7 +179,7 @@ function createFeature({ featureSlug, createFeatureDb }) {
 
   const getRoundByIdStmt = db.prepare(`
     SELECT id, guild_id, channel_id, message_id, owner_user_id, title, description, image_url, thumbnail_url,
-           status, winner_user_id, winner_awarded_at, created_at, updated_at
+           status, item_name, item_set_at, winner_user_id, winner_awarded_at, cancelled_at, created_at, updated_at
     FROM zoom_find_rounds
     WHERE id = ?
   `);
@@ -168,17 +203,6 @@ function createFeature({ featureSlug, createFeatureDb }) {
     LIMIT ?
   `);
 
-  const getWinnerOptionsStmt = db.prepare(`
-    SELECT user_id,
-           COALESCE(MAX(NULLIF(username, '')), user_id) AS username,
-           MAX(created_at) AS latest_guess_at
-    FROM zoom_find_guesses
-    WHERE round_id = ?
-    GROUP BY user_id
-    ORDER BY latest_guess_at DESC
-    LIMIT 25
-  `);
-
   const clearGuessesStmt = db.prepare(`DELETE FROM zoom_find_guesses WHERE round_id = ?`);
 
   const setWinnerStmt = db.prepare(`
@@ -186,6 +210,40 @@ function createFeature({ featureSlug, createFeatureDb }) {
     SET winner_user_id = ?,
         winner_awarded_at = datetime('now'),
         status = 'completed',
+        updated_at = datetime('now')
+    WHERE id = ? AND status = 'active' AND winner_user_id IS NULL
+  `);
+
+  const setItemNameStmt = db.prepare(`
+    UPDATE zoom_find_rounds
+    SET item_name = ?,
+        item_set_at = datetime('now'),
+        status = 'active',
+        cancelled_at = NULL,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `);
+
+  const resetRoundStateStmt = db.prepare(`
+    UPDATE zoom_find_rounds
+    SET item_name = NULL,
+        item_set_at = NULL,
+        winner_user_id = NULL,
+        winner_awarded_at = NULL,
+        cancelled_at = NULL,
+        status = 'active',
+        updated_at = datetime('now')
+    WHERE id = ?
+  `);
+
+  const cancelRoundStateStmt = db.prepare(`
+    UPDATE zoom_find_rounds
+    SET item_name = NULL,
+        item_set_at = NULL,
+        winner_user_id = NULL,
+        winner_awarded_at = NULL,
+        cancelled_at = datetime('now'),
+        status = 'cancelled',
         updated_at = datetime('now')
     WHERE id = ?
   `);
@@ -256,6 +314,8 @@ function createFeature({ featureSlug, createFeatureDb }) {
             description: ZOOM_FIND_DESCRIPTION,
             image_url: imageUrl,
             thumbnail_url: thumbnailUrl,
+            status: "active",
+            item_name: null,
             winner_user_id: null
           };
 
@@ -329,12 +389,12 @@ function createFeature({ featureSlug, createFeatureDb }) {
         }
       },
       {
-        customId: /^zoom-find:choose:\d+$/,
+        customId: /^zoom-find:item:\d+$/,
         async execute(interaction) {
           const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
           if (denied) return denied;
 
-          const roundId = parseRoundId(interaction.customId, CHOOSE_WINNER_PREFIX);
+          const roundId = parseRoundId(interaction.customId, ITEM_NAME_PREFIX);
           if (!roundId) return;
 
           const round = getRoundByIdStmt.get(roundId);
@@ -342,46 +402,29 @@ function createFeature({ featureSlug, createFeatureDb }) {
             return reply(interaction, { content: "Zoom Find round not found.", ephemeral: true });
           }
 
-          if (round.winner_user_id) {
-            return reply(interaction, {
-              content: `A winner is already set for this round: <@${round.winner_user_id}>.`,
-              ephemeral: true
-            });
-          }
+          const modal = new ModalBuilder().setCustomId(`${ITEM_NAME_MODAL_PREFIX}${roundId}`).setTitle(`Set Item Name #${roundId}`);
+          modal.addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId("item_name")
+                .setLabel("What is the item name?")
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+                .setMaxLength(120)
+                .setPlaceholder("Example: Purple knitted sweater")
+            )
+          );
 
-          const options = getWinnerOptionsStmt.all(roundId);
-          if (!options.length) {
-            return reply(interaction, {
-              content: "No guesses yet. Wait for members to submit guesses first.",
-              ephemeral: true
-            });
-          }
-
-          const menu = new StringSelectMenuBuilder()
-            .setCustomId(`${WINNER_SELECT_PREFIX}${roundId}`)
-            .setPlaceholder("Select the winning member")
-            .addOptions(
-              options.map((option) => ({
-                label: String(option.username || option.user_id).slice(0, 100),
-                value: option.user_id,
-                description: `User ID: ${option.user_id}`.slice(0, 100)
-              }))
-            );
-
-          return reply(interaction, {
-            content: "Pick the winner for this Zoom Find round.",
-            components: [new ActionRowBuilder().addComponents(menu)],
-            ephemeral: true
-          });
+          return interaction.showModal(modal);
         }
       },
       {
-        customId: /^zoom-find:clear:\d+$/,
+        customId: /^zoom-find:reset:\d+$/,
         async execute(interaction, { client }) {
           const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
           if (denied) return denied;
 
-          const roundId = parseRoundId(interaction.customId, CLEAR_GUESSES_PREFIX);
+          const roundId = parseRoundId(interaction.customId, RESET_ROUND_PREFIX);
           if (!roundId) return;
 
           const round = getRoundByIdStmt.get(roundId);
@@ -390,23 +433,22 @@ function createFeature({ featureSlug, createFeatureDb }) {
           }
 
           clearGuessesStmt.run(roundId);
+          resetRoundStateStmt.run(roundId);
           await updateRoundMessage(client, roundId);
 
           return reply(interaction, {
-            content: `Cleared all guesses for Round #${roundId}.`,
+            content: `Round #${roundId} has been reset.`,
             ephemeral: true
           });
         }
-      }
-    ],
-    selectMenus: [
+      },
       {
-        customId: /^zoom-find:winner:\d+$/,
+        customId: /^zoom-find:cancel:\d+$/,
         async execute(interaction, { client }) {
           const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
           if (denied) return denied;
 
-          const roundId = parseRoundId(interaction.customId, WINNER_SELECT_PREFIX);
+          const roundId = parseRoundId(interaction.customId, CANCEL_ROUND_PREFIX);
           if (!roundId) return;
 
           const round = getRoundByIdStmt.get(roundId);
@@ -414,48 +456,52 @@ function createFeature({ featureSlug, createFeatureDb }) {
             return reply(interaction, { content: "Zoom Find round not found.", ephemeral: true });
           }
 
-          if (round.winner_user_id) {
-            return reply(interaction, {
-              content: `A winner is already set for this round: <@${round.winner_user_id}>.`,
-              ephemeral: true
-            });
-          }
-
-          const winnerUserId = interaction.values[0];
-          if (!winnerUserId) {
-            return reply(interaction, {
-              content: "No winner selected.",
-              ephemeral: true
-            });
-          }
-
-          applyCoinDelta({
-            guildId: interaction.guildId || "dm",
-            userId: winnerUserId,
-            amount: ZOOM_FIND_REWARD,
-            reason: `Zoom Find Round #${roundId} winner`,
-            createdBy: interaction.user.id,
-            source: "zoom_find"
-          });
-
-          setWinnerStmt.run(winnerUserId, roundId);
+          clearGuessesStmt.run(roundId);
+          cancelRoundStateStmt.run(roundId);
           await updateRoundMessage(client, roundId);
 
-          await syncLeaderboardMessage({
-            client,
-            guildId: interaction.guildId,
-            channelId: config.leaderboardChannelId,
-            forcePost: false
-          }).catch(() => null);
-
           return reply(interaction, {
-            content: `<@${winnerUserId}> awarded **${ZOOM_FIND_REWARD} coins** for Round #${roundId}.`,
+            content: `Round #${roundId} has been cancelled and reset.`,
             ephemeral: true
           });
         }
       }
     ],
     modals: [
+      {
+        customId: /^zoom-find:item-modal:\d+$/,
+        async execute(interaction, { client }) {
+          const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
+          if (denied) return denied;
+
+          const roundId = parseRoundId(interaction.customId, ITEM_NAME_MODAL_PREFIX);
+          if (!roundId) return;
+
+          const round = getRoundByIdStmt.get(roundId);
+          if (!round) {
+            return reply(interaction, {
+              content: "Zoom Find round not found.",
+              ephemeral: true
+            });
+          }
+
+          const itemName = sanitizeGuess(interaction.fields.getTextInputValue("item_name"));
+          if (!itemName) {
+            return reply(interaction, {
+              content: "Please enter a valid item name.",
+              ephemeral: true
+            });
+          }
+
+          setItemNameStmt.run(itemName, roundId);
+          await updateRoundMessage(client, roundId);
+
+          return reply(interaction, {
+            content: `Item name set for Round #${roundId}.`,
+            ephemeral: true
+          });
+        }
+      },
       {
         customId: /^zoom-find:guess-modal:\d+$/,
         async execute(interaction, { client }) {
@@ -479,6 +525,38 @@ function createFeature({ featureSlug, createFeatureDb }) {
           }
 
           insertGuessStmt.run(roundId, interaction.guildId || "dm", interaction.user.id, interaction.user.username, guessText);
+          const latestRound = getRoundByIdStmt.get(roundId);
+
+          if (latestRound?.status === "active" && latestRound?.item_name && !latestRound?.winner_user_id) {
+            const isCorrect = normalizeGuess(guessText) === normalizeGuess(latestRound.item_name);
+            if (isCorrect) {
+              const updateResult = setWinnerStmt.run(interaction.user.id, roundId);
+              if (updateResult.changes > 0) {
+                applyCoinDelta({
+                  guildId: interaction.guildId || "dm",
+                  userId: interaction.user.id,
+                  amount: ZOOM_FIND_REWARD,
+                  reason: `Zoom Find Round #${roundId} winner`,
+                  createdBy: latestRound.owner_user_id || interaction.user.id,
+                  source: "zoom_find"
+                });
+
+                await syncLeaderboardMessage({
+                  client,
+                  guildId: interaction.guildId,
+                  channelId: config.leaderboardChannelId,
+                  forcePost: false
+                }).catch(() => null);
+
+                await updateRoundMessage(client, roundId);
+
+                return reply(interaction, {
+                  content: `Correct! You guessed the item and earned **${ZOOM_FIND_REWARD} coins**.`,
+                  ephemeral: true
+                });
+              }
+            }
+          }
 
           await updateRoundMessage(client, roundId);
 
