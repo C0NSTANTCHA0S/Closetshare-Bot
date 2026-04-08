@@ -43,7 +43,8 @@ const config = {
   shiftAutopostLeadMinutes: process.env.SHIFT_AUTOPOST_LEAD_MINUTES || "15",
   shiftPayoutCoins: process.env.SHIFT_PAYOUT_COINS || "15",
   dailyLoginImageUrl: process.env.DAILY_LOGIN_IMAGE_URL || "",
-  dailyLoginThumbnailUrl: process.env.DAILY_LOGIN_THUMBNAIL_URL || ""
+  dailyLoginThumbnailUrl: process.env.DAILY_LOGIN_THUMBNAIL_URL || "",
+  shiftStatsImageUrl: process.env.SHIFT_STATS_IMAGE_URL || ""
 };
 
 module.exports = { config };

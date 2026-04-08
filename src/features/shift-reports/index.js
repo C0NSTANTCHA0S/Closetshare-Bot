@@ -14,6 +14,8 @@ const DAILY_UNAVAILABLE_PREFIX = "daily_unavailable:";
 const DAILY_CANCEL_PREFIX = "daily_cancel:";
 const DAILY_APPROVE_PREFIX = "daily_approve:";
 const DAILY_REJECT_PREFIX = "daily_reject:";
+const SHIFT_STATS_REFRESH_BUTTON_ID = "shift_stats_refresh";
+const SHIFT_STATS_RESET_BUTTON_ID = "shift_stats_reset";
 
 const SHIFT_REWARD_COINS = Math.max(1, Number(config.shiftPayoutCoins) || 15);
 const AUTOPOST_LEAD_MINUTES = Math.max(0, Number(config.shiftAutopostLeadMinutes) || 15);
@@ -415,6 +417,9 @@ function createFeature({ featureSlug, createFeatureDb }) {
     JOIN daily_shifts s ON s.id = p.shift_id
     WHERE s.shift_date LIKE ? || '%'
   `);
+  const clearShiftStatsDataStmt = db.prepare(`
+    DELETE FROM daily_shifts;
+  `);
 
   const insertReportStmt = db.prepare(`
     INSERT INTO reports (guild_id, user_id, summary)
@@ -576,6 +581,62 @@ function createFeature({ featureSlug, createFeatureDb }) {
         await createReviewRequest({ client, shift });
       }
     }
+  }
+
+  function buildShiftStatsResponse() {
+    const allTime = topAllTimeStmt.all();
+    const now = new Date();
+    const monthKey = getMonthKey(now, config.shiftTimezone);
+    const topMonth = topMonthStmt.get(monthKey);
+    const weekStartDate = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
+    const weekStartKey = getDateKey(weekStartDate, config.shiftTimezone);
+    const todayKey = getDateKey(now, config.shiftTimezone);
+    const weeklyTotals = weeklyTotalsStmt.get(weekStartKey, todayKey) || {
+      volunteer_count: 0,
+      verified_shifts: 0
+    };
+    const monthlyTotals = monthlyTotalsStmt.get(monthKey) || {
+      volunteer_count: 0,
+      verified_shifts: 0
+    };
+
+    const allTimeText = allTime.length
+      ? allTime.map((row, index) => `${index + 1}. <@${row.user_id}> — **${row.shifts}** shifts`).join("\n")
+      : "No verified shift payouts yet.";
+
+    const volunteerOfMonth = topMonth
+      ? `<@${topMonth.user_id}> with **${topMonth.shifts}** verified shifts in ${monthKey}.`
+      : `No verified shifts yet for ${monthKey}.`;
+
+    const totalsText =
+      `**Weekly (last 7 days):** ${weeklyTotals.volunteer_count || 0} volunteers across **${weeklyTotals.verified_shifts || 0}** verified shifts.\n` +
+      `**Monthly (${monthKey}):** ${monthlyTotals.volunteer_count || 0} volunteers across **${monthlyTotals.verified_shifts || 0}** verified shifts.`;
+
+    const statsEmbed = makeEmbed({
+      title: "Volunteer Shift Stats",
+      fields: [
+        { name: "Most Days Volunteered (All-Time)", value: allTimeText },
+        { name: "Volunteer of the Month", value: volunteerOfMonth },
+        { name: "Volunteer Totals", value: totalsText }
+      ]
+    });
+    const statsThumbnail = safeEmbedUrl(config.dailyLoginThumbnailUrl);
+    const statsImage = safeEmbedUrl(config.shiftStatsImageUrl);
+    if (statsThumbnail) statsEmbed.setThumbnail(statsThumbnail);
+    if (statsImage) statsEmbed.setImage(statsImage);
+
+    const controls = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(SHIFT_STATS_REFRESH_BUTTON_ID)
+        .setLabel("Refresh Stats")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(SHIFT_STATS_RESET_BUTTON_ID)
+        .setLabel("Reset Stats")
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    return { embeds: [statsEmbed], components: [controls] };
   }
 
   let schedulerHandle = null;
@@ -773,46 +834,8 @@ function createFeature({ featureSlug, createFeatureDb }) {
           .setName("post-shift-stats")
           .setDescription("Post volunteer shift stats for attendance and recognition."),
         async execute(interaction) {
-          const allTime = topAllTimeStmt.all();
-          const now = new Date();
-          const monthKey = getMonthKey(now, config.shiftTimezone);
-          const topMonth = topMonthStmt.get(monthKey);
-          const weekStartDate = new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000);
-          const weekStartKey = getDateKey(weekStartDate, config.shiftTimezone);
-          const todayKey = getDateKey(now, config.shiftTimezone);
-          const weeklyTotals = weeklyTotalsStmt.get(weekStartKey, todayKey) || {
-            volunteer_count: 0,
-            verified_shifts: 0
-          };
-          const monthlyTotals = monthlyTotalsStmt.get(monthKey) || {
-            volunteer_count: 0,
-            verified_shifts: 0
-          };
-
-          const allTimeText = allTime.length
-            ? allTime.map((row, index) => `${index + 1}. <@${row.user_id}> — **${row.shifts}** shifts`).join("\n")
-            : "No verified shift payouts yet.";
-
-          const volunteerOfMonth = topMonth
-            ? `<@${topMonth.user_id}> with **${topMonth.shifts}** verified shifts in ${monthKey}.`
-            : `No verified shifts yet for ${monthKey}.`;
-
-          const totalsText = `**Weekly (last 7 days):** ${weeklyTotals.volunteer_count || 0} volunteers across **${weeklyTotals.verified_shifts || 0}** verified shifts.\n` +
-            `**Monthly (${monthKey}):** ${monthlyTotals.volunteer_count || 0} volunteers across **${monthlyTotals.verified_shifts || 0}** verified shifts.`;
-
-          const statsEmbed = makeEmbed({
-            title: "Volunteer Shift Stats",
-            fields: [
-              { name: "Most Days Volunteered (All-Time)", value: allTimeText },
-              { name: "Volunteer of the Month", value: volunteerOfMonth },
-              { name: "Volunteer Totals", value: totalsText }
-            ]
-          });
-          const statsThumbnail = safeEmbedUrl(config.dailyLoginThumbnailUrl);
-          if (statsThumbnail) statsEmbed.setThumbnail(statsThumbnail);
-
           return reply(interaction, {
-            embeds: [statsEmbed],
+            ...buildShiftStatsResponse(),
             ephemeral: false
           });
         }
@@ -1002,6 +1025,27 @@ function createFeature({ featureSlug, createFeatureDb }) {
             content: "Shift marked as rejected. No payout issued.",
             ephemeral: true
           });
+        }
+      },
+      {
+        customId: SHIFT_STATS_REFRESH_BUTTON_ID,
+        async execute(interaction) {
+          const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
+          if (denied) return denied;
+
+          await interaction.update(buildShiftStatsResponse());
+          return null;
+        }
+      },
+      {
+        customId: SHIFT_STATS_RESET_BUTTON_ID,
+        async execute(interaction) {
+          const denied = ensureOwnerAccess(interaction, config.ownerRoleId);
+          if (denied) return denied;
+
+          clearShiftStatsDataStmt.run();
+          await interaction.update(buildShiftStatsResponse());
+          return null;
         }
       }
     ],
