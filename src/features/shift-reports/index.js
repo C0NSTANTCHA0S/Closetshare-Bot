@@ -26,6 +26,25 @@ const STATUS_COLORS = {
   rejected: 0xf1c40f,
   cancelled: 0xe74c3c
 };
+const WEEKDAY_INDEX_BY_NAME = {
+  sunday: 0,
+  sun: 0,
+  monday: 1,
+  mon: 1,
+  tuesday: 2,
+  tue: 2,
+  tues: 2,
+  wednesday: 3,
+  wed: 3,
+  thursday: 4,
+  thu: 4,
+  thur: 4,
+  thurs: 4,
+  friday: 5,
+  fri: 5,
+  saturday: 6,
+  sat: 6
+};
 
 function parseClockMinutes(value) {
   const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
@@ -56,11 +75,15 @@ function parseShiftWindows(raw) {
         if (!key || startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
           return null;
         }
+
+        const weekdayIndexes = resolveWeekdayIndexes(window, key, label);
+
         return {
           key,
           label: label.slice(0, 100),
           startMinutes,
-          endMinutes
+          endMinutes,
+          weekdayIndexes
         };
       })
       .filter(Boolean)
@@ -69,6 +92,47 @@ function parseShiftWindows(raw) {
   } catch {
     return [];
   }
+}
+
+function parseWeekdayIndex(value) {
+  if (Number.isInteger(value) && value >= 0 && value <= 6) return value;
+
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return null;
+
+  return WEEKDAY_INDEX_BY_NAME[normalized] ?? null;
+}
+
+function resolveWeekdayIndexes(window, key, label) {
+  const explicitDays = Array.isArray(window?.days)
+    ? window.days
+    : window?.days != null
+      ? [window.days]
+      : window?.day != null
+        ? [window.day]
+        : [];
+
+  const indexes = new Set();
+  for (const dayValue of explicitDays) {
+    const dayIndex = parseWeekdayIndex(dayValue);
+    if (dayIndex !== null) indexes.add(dayIndex);
+  }
+
+  if (indexes.size) return [...indexes].sort((a, b) => a - b);
+
+  const inferredFromText = [key, label]
+    .flatMap((value) =>
+      String(value || "")
+        .toLowerCase()
+        .split(/[^a-z]+/g)
+    )
+    .map((token) => parseWeekdayIndex(token))
+    .filter((index) => index !== null);
+
+  if (!inferredFromText.length) return null;
+  return [...new Set(inferredFromText)].sort((a, b) => a - b);
 }
 
 const SHIFT_WINDOWS = parseShiftWindows(config.shiftWindowsJson);
@@ -108,6 +172,16 @@ function getMonthKey(date, timeZone) {
 function getMinutesIntoDay(date, timeZone) {
   const parts = getLocalParts(date, timeZone);
   return parts.hour * 60 + parts.minute;
+}
+
+function getWeekdayIndex(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short"
+  });
+
+  const weekday = formatter.format(date).toLowerCase();
+  return parseWeekdayIndex(weekday);
 }
 
 function formatClock(minutes) {
@@ -441,15 +515,33 @@ function createFeature({ featureSlug, createFeatureDb }) {
     LIMIT 5
   `);
 
-  function pickShiftForManualPost(nowMinutes, explicitShiftKey) {
+  function pickShiftForManualPost(nowMinutes, explicitShiftKey, weekdayIndex = null) {
     if (!SHIFT_WINDOWS.length) return null;
 
     if (explicitShiftKey) {
       return SHIFT_WINDOWS.find((shift) => shift.key === explicitShiftKey) || null;
     }
 
-    const current = SHIFT_WINDOWS.find((shift) => nowMinutes <= shift.endMinutes);
-    return current || SHIFT_WINDOWS[0];
+    const candidateWindows =
+      weekdayIndex === null
+        ? SHIFT_WINDOWS
+        : SHIFT_WINDOWS.filter(
+            (shift) => !Array.isArray(shift.weekdayIndexes) || shift.weekdayIndexes.includes(weekdayIndex)
+          );
+    if (!candidateWindows.length) return null;
+
+    const current = candidateWindows.find((shift) => nowMinutes <= shift.endMinutes);
+    return current || candidateWindows[0];
+  }
+
+  function pickShiftForAutoPost(nowMinutes, weekdayIndex) {
+    const shiftWindow = pickShiftForManualPost(nowMinutes, null, weekdayIndex);
+    if (!shiftWindow) return null;
+
+    const autopostMinute = shiftWindow.startMinutes - AUTOPOST_LEAD_MINUTES;
+    if (nowMinutes < autopostMinute || nowMinutes > shiftWindow.endMinutes) return null;
+
+    return shiftWindow;
   }
 
   async function postDailyShift({ guild, channel, shiftWindow, shiftDate, actorUserId }) {
@@ -552,19 +644,17 @@ function createFeature({ featureSlug, createFeatureDb }) {
       const now = new Date();
       const minutesIntoDay = getMinutesIntoDay(now, config.shiftTimezone);
       const shiftDate = getDateKey(now, config.shiftTimezone);
+      const weekdayIndex = getWeekdayIndex(now, config.shiftTimezone);
+      const shiftWindow = pickShiftForAutoPost(minutesIntoDay, weekdayIndex);
+      if (!shiftWindow) continue;
 
-      for (const shiftWindow of SHIFT_WINDOWS) {
-        const autopostMinute = shiftWindow.startMinutes - AUTOPOST_LEAD_MINUTES;
-        if (minutesIntoDay < autopostMinute || minutesIntoDay > shiftWindow.endMinutes) continue;
-
-        await postDailyShift({
-          guild,
-          channel,
-          shiftWindow,
-          shiftDate,
-          actorUserId: "system"
-        });
-      }
+      await postDailyShift({
+        guild,
+        channel,
+        shiftWindow,
+        shiftDate,
+        actorUserId: "system"
+      });
     }
   }
 
@@ -720,7 +810,8 @@ function createFeature({ featureSlug, createFeatureDb }) {
           const shiftOption = interaction.options.getString("shift");
           const now = new Date();
           const nowMinutes = getMinutesIntoDay(now, config.shiftTimezone);
-          const shiftWindow = pickShiftForManualPost(nowMinutes, shiftOption);
+          const weekdayIndex = getWeekdayIndex(now, config.shiftTimezone);
+          const shiftWindow = pickShiftForManualPost(nowMinutes, shiftOption, weekdayIndex);
           if (!shiftWindow) {
             return reply(interaction, {
               content: "Unable to resolve a valid shift for today.",
